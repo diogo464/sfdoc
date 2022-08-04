@@ -1,9 +1,7 @@
 mod builder;
 mod diagnostic;
-mod parser;
 mod parser2;
 mod source;
-mod tokenizer;
 
 use std::{
     collections::HashMap,
@@ -95,7 +93,7 @@ pub struct Return {
     pub description: String,
 }
 
-pub fn document(files: impl Iterator<Item = SourceFile<'_>>) -> (Docs, Vec<Diagnostic>) {
+pub fn document(files: impl Iterator<Item = LuaFile<'_>>) -> (Docs, Vec<Diagnostic>) {
     let mut builder = DocBuilder::default();
 
     todo!()
@@ -118,10 +116,11 @@ fn document_files(file_paths: Vec<PathBuf>) -> std::io::Result<(Docs, Vec<Diagno
         let content = std::fs::read_to_string(&path).unwrap();
         files.push((path, content));
     }
-    Ok(document(files.iter().map(|(path, content)| SourceFile {
-        path,
-        source: content,
-    })))
+    Ok(document(
+        files
+            .iter()
+            .map(|(path, source)| LuaFile::new(path, source)),
+    ))
 }
 
 fn path_to_vec(path: &Path, vec: &mut Vec<PathBuf>) {

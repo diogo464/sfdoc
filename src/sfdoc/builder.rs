@@ -28,7 +28,7 @@ macro_rules! attr_single {
 
 macro_rules! attr_name {
     ($section:expr, $msg:expr) => {
-        attr_single!($section, AttributeKind::Name(n) => n, $msg)
+        attr_single!($section, AttributeKind::Name{name:n, ..} => n, $msg)
     };
 }
 
@@ -62,7 +62,7 @@ macro_rules! attr_desc {
                     if !description.is_empty() {
                         description.push(' ');
                     }
-                    description.push_str(d);
+                    description.push_str(d.as_str());
                 }
                 _ => fail_on_desc = true,
             }
@@ -75,7 +75,7 @@ macro_rules! attr_fields {
     ($section:expr) => {
         attr_many!($section, AttributeKind::Field{name, description} => Field{
             name: name.to_string(),
-            description: description.to_string(),
+            description: description.as_str().to_owned(),
         }).collect::<Vec<_>>()
     };
 }
@@ -95,7 +95,7 @@ macro_rules! attr_params {
                 params.push(Parameter {
                     name:name.as_str().to_string(),
                     ty,
-                    description:description.to_string(),
+                    description:description.as_str().to_owned(),
                     optional:types.optional(),
                 });
             }
@@ -118,7 +118,7 @@ macro_rules! attr_returns {
                 }
                 returns.push(Return {
                     ty,
-                    description:description.to_string(),
+                    description:description.as_str().to_owned(),
                 });
             }
             returns
@@ -205,6 +205,7 @@ pub struct DocBuilder<'s> {
     tbl_to_type: HashMap<&'s str, &'s str>,
     tbl_methods: HashMap<&'s str, Vec<Method>>,
     tbl_tables: HashMap<&'s str, Vec<Table>>,
+    lua_files: HashMap<&'s Path, LuaFile<'s>>,
     diagnostics: Vec<Diagnostic>,
     current_file: LuaFile<'s>,
 }
@@ -218,12 +219,15 @@ impl<'s> DocBuilder<'s> {
             tbl_to_type: Default::default(),
             tbl_methods: Default::default(),
             tbl_tables: Default::default(),
+            lua_files: Default::default(),
             diagnostics: Default::default(),
             current_file: Default::default(),
         }
     }
 
     pub fn parse_file(&mut self, file: LuaFile<'s>) {
+        // TODO: warning if already exists
+        self.lua_files.insert(file.path(), file);
         self.current_file = file;
         let mut parser = Parser::new(file.source);
         while let Some(parse_result) = parser.next_section() {
@@ -251,13 +255,13 @@ impl<'s> DocBuilder<'s> {
 
         log::debug!("Parsing section with class {:?}", section.class());
         // TODO: Remove Result from all of this functions and push diagnostics instead
-        let result = match section.class() {
-            Some(Class::Hook) => self.parse_hook(section),
-            Some(Class::Type) => self.parse_type(section),
-            Some(Class::Table) => self.parse_table(section),
-            Some(Class::Library) => self.parse_library(section),
-            Some(Class::Function) => self.parse_function(section),
-            Some(Class::Unknown(_)) => Err(DocBuilderError::new(
+        let result = match section.class().map(Class::kind) {
+            Some(ClassKind::Hook) => self.parse_hook(section),
+            Some(ClassKind::Type) => self.parse_type(section),
+            Some(ClassKind::Table) => self.parse_table(section),
+            Some(ClassKind::Library) => self.parse_library(section),
+            Some(ClassKind::Function) => self.parse_function(section),
+            Some(ClassKind::Unknown) => Err(DocBuilderError::new(
                 section.line_number(),
                 format!("Unknown section class: {:?}", section.class()),
             )),

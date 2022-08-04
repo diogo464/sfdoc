@@ -1,3 +1,4 @@
+#![feature(pattern)]
 #![feature(assert_matches)]
 #![feature(str_split_as_str)]
 #![feature(str_split_whitespace_as_str)]
@@ -37,9 +38,6 @@ fn main() {
     match args.subcommand {
         Command::Parse(parse) => {
             println!("{:?}", parse);
-            let content = std::fs::read_to_string(&parse.paths[0]).unwrap();
-            let docs = sfdoc::parse(&content).unwrap();
-            println!("{:#?}", docs);
         }
     }
 }
