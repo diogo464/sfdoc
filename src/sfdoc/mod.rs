@@ -1,6 +1,7 @@
+mod attribute;
 mod builder;
 mod diagnostic;
-mod parser;
+mod section;
 mod source;
 
 use std::{
@@ -15,6 +16,7 @@ use self::builder::DocBuilder;
 pub use self::builder::{Diagnostic, DiagnosticLevel, LuaFile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Realm {
     Client,
     Server,
@@ -35,6 +37,7 @@ pub struct Library {
     pub realm: Realm,
     pub tables: HashMap<String, Table>,
     pub methods: HashMap<String, Method>,
+    pub fields: HashMap<String, Field>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,14 +86,17 @@ pub struct Method {
 pub struct Parameter {
     pub name: String,
     pub description: String,
+    #[serde(rename = "type")]
     pub ty: String,
     pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Return {
+    #[serde(rename = "type")]
     pub ty: String,
     pub description: String,
+    pub optional: bool,
 }
 
 pub fn document(files: impl Iterator<Item = LuaFile<'_>>) -> (Docs, Vec<Diagnostic>) {

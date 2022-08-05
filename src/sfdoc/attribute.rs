@@ -44,7 +44,7 @@ impl<'s> std::fmt::Display for Ident<'s> {
 }
 
 impl<'s> Ident<'s> {
-    fn new(value: &'s str) -> Result<Self, IdentParseError> {
+    pub fn new(value: &'s str) -> Result<Self, IdentParseError> {
         if value.is_empty() {
             return Err(IdentParseError(value));
         }
@@ -64,6 +64,39 @@ impl<'s> Ident<'s> {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Description<'s> {
+    value: &'s str,
+}
+
+impl<'s> std::fmt::Display for Description<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+impl<'s> From<&'s str> for Description<'s> {
+    fn from(v: &'s str) -> Self {
+        Self::new(v)
+    }
+}
+
+impl<'s> AsRef<str> for Description<'s> {
+    fn as_ref(&self) -> &'s str {
+        self.value
+    }
+}
+
+impl<'s> Description<'s> {
+    fn new(value: &'s str) -> Self {
+        Description { value }
+    }
+
+    pub fn as_str(&self) -> &'s str {
+        self.value
+    }
+}
+
 /// Class types that will decide how we parse the attributes
 /// They come in a line attribute. Example:
 /// -- @class table
@@ -72,6 +105,7 @@ pub enum ClassKind {
     Hook,
     Type,
     Table,
+    Field,
     Library,
     Function,
     Unknown,
@@ -92,7 +126,7 @@ impl<'s> Class<'s> {
         self.kind
     }
 
-    pub fn ident(&self) -> Ident {
+    pub fn ident(&self) -> Ident<'s> {
         self.ident
     }
 }
@@ -103,38 +137,12 @@ impl<'s> From<Ident<'s>> for Class<'s> {
             "hook" => ClassKind::Hook,
             "type" => ClassKind::Type,
             "table" => ClassKind::Table,
+            "field" => ClassKind::Field,
             "library" => ClassKind::Library,
             "function" => ClassKind::Function,
             _ => ClassKind::Unknown,
         };
         Class::new(kind, c)
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Description<'s> {
-    value: &'s str,
-}
-
-impl<'s> From<&'s str> for Description<'s> {
-    fn from(v: &'s str) -> Self {
-        Self::new(v)
-    }
-}
-
-impl AsRef<str> for Description<'_> {
-    fn as_ref(&self) -> &str {
-        self.value
-    }
-}
-
-impl<'s> Description<'s> {
-    fn new(value: &'s str) -> Self {
-        Description { value }
-    }
-
-    pub fn as_str(&self) -> &'s str {
-        self.value
     }
 }
 
@@ -182,6 +190,9 @@ impl<'s> TypeUnion<'s> {
         self.optional
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Parameter {}
 
 #[derive(Debug, Clone)]
 pub enum AttributeParseError<'s> {
@@ -287,14 +298,16 @@ impl<'s> AttributeKind<'s> {
         let line = line.trim_start();
         if line.starts_with(HEADER) {
             return Ok(Self::Header {
-                description: Description::from(line),
+                description: Description::from(line.trim_start_matches(DASH).trim_start()),
             });
         }
 
         if line.starts_with(TRIPLE_DASH)
             || (!line.starts_with(ATTRIBUTE) && line.starts_with(DOUBLE_DASH))
         {
-            return Ok(Self::Description(Description::from(line)));
+            return Ok(Self::Description(Description::from(
+                line.trim_start_matches(DASH).trim_start(),
+            )));
         }
 
         if !line.starts_with(ATTRIBUTE) {
@@ -391,175 +404,6 @@ impl<'s> Attribute<'s> {
 
     pub fn line_number(&self) -> usize {
         0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Section<'p, 's> {
-    /// The content of the entire section
-    content: &'s str,
-    /// The reaming text after this section
-    remaining: &'s str,
-    /// The first class attribute in this section
-    class: Option<Class<'s>>,
-    /// Are there multiple class attributes in this section?
-    multiple_classes: bool,
-    /// The attributes in this section
-    attributes: &'p [Attribute<'s>],
-}
-
-impl<'p, 's> Section<'p, 's> {
-    fn new(
-        content: &'s str,
-        remaining: &'s str,
-        class: Option<Class<'s>>,
-        multiple_classes: bool,
-        attributes: &'p [Attribute<'s>],
-    ) -> Self {
-        Self {
-            content,
-            remaining,
-            class,
-            multiple_classes,
-            attributes,
-        }
-    }
-
-    pub fn remaining(&self) -> &'s str {
-        self.remaining
-    }
-
-    pub fn class(&self) -> Option<&Class<'s>> {
-        self.class.as_ref()
-    }
-
-    pub fn multiple_classes(&self) -> bool {
-        self.multiple_classes
-    }
-
-    pub fn attributes(&self) -> &'p [Attribute<'s>] {
-        self.attributes
-    }
-
-    pub fn following_line(&self) -> Option<&'s str> {
-        self.remaining.lines().next()
-    }
-
-    pub fn source(&self) -> &'s str {
-        self.content
-    }
-
-    pub fn line_number(&self) -> usize {
-        0
-    }
-}
-
-#[derive(Debug)]
-pub struct ParseError;
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parse error")
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-pub struct Parser<'s> {
-    lines: Split<'s, char>,
-    current_line: usize,
-
-    // parse state
-    attributes: Vec<Attribute<'s>>,
-    spotted_class: Option<Class<'s>>,
-    multiple_classes: bool,
-}
-
-impl<'s> Parser<'s> {
-    pub fn new(source: &'s str) -> Self {
-        Self {
-            lines: source.split('\n'),
-            current_line: 0,
-
-            attributes: Vec::with_capacity(16),
-            spotted_class: None,
-            multiple_classes: false,
-        }
-    }
-
-    pub fn next_section(&mut self) -> Option<Result<Section<'_, 's>, ParseError>> {
-        while let Some(line) = self.peek_line() {
-            let trimmed = line.trim_start();
-            if !trimmed.starts_with(TRIPLE) {
-                self.skip_line();
-                continue;
-            }
-            return Some(self.parse_section());
-        }
-        None
-    }
-
-    fn parse_section(&mut self) -> Result<Section<'_, 's>, ParseError> {
-        // clear the state from parsing the previous item
-        self.attributes.clear();
-        self.spotted_class = None;
-        self.multiple_classes = false;
-
-        let begin_str = self.lines.as_str();
-        loop {
-            let line = match self.peek_line() {
-                Some(line) => line.trim_start(),
-                None => break,
-            };
-
-            if !line.starts_with(DOUBLE) && !line.starts_with(TRIPLE) {
-                break;
-            }
-
-            let line = self.consume_line().unwrap().trim_start();
-            match Attribute::new(line) {
-                Ok(attr) => {
-                    match attr.kind() {
-                        AttributeKind::Class(c) => match self.spotted_class {
-                            Some(_) => self.multiple_classes = true,
-                            None => self.spotted_class = Some(*c),
-                        },
-                        _ => {}
-                    }
-                    self.attributes.push(attr);
-                }
-                Err(e) => {
-                    // TODO: return vec of errors
-                    log::error!("{}", e);
-                }
-            }
-        }
-        let remaining = self.remaining();
-        let section_str = &begin_str[..begin_str.len() - remaining.len()];
-
-        Ok(Section::new(
-            section_str,
-            remaining,
-            self.spotted_class,
-            self.multiple_classes,
-            &self.attributes,
-        ))
-    }
-
-    fn remaining(&self) -> &'s str {
-        self.lines.as_str()
-    }
-
-    fn peek_line(&self) -> Option<&'s str> {
-        self.lines.clone().next()
-    }
-
-    fn consume_line(&mut self) -> Option<&'s str> {
-        self.lines.next()
-    }
-
-    fn skip_line(&mut self) {
-        self.consume_line();
     }
 }
 
