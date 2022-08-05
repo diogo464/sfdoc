@@ -1,12 +1,11 @@
 use std::{
-    assert_matches::debug_assert_matches,
     collections::HashMap,
     path::{Path, PathBuf},
 };
 
 use crate::sfdoc::{Field, Hook, Parameter, Return, Type};
 
-use super::{diagnostic::DiagnosticEmitter, parser2::*, Docs, Library, Method, Realm, Table};
+use super::{parser::*, Docs, Library, Method, Realm, Table};
 
 use anyhow::Result;
 
@@ -142,6 +141,18 @@ macro_rules! attr_realm {
     }};
 }
 
+/// A documentation section in progress of being built.
+#[derive(Debug, Default, Clone)]
+struct PartialSection<'s> {
+    name: Option<Ident<'s>>,
+    class: Option<Class<'s>>,
+    top_level_description: String,
+    parameters: Vec<Parameter>,
+    returns: Vec<Return>,
+    fields: Vec<Field>,
+    tbls: Vec<Ident<'s>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct LuaFile<'s> {
     path: &'s Path,
@@ -181,6 +192,10 @@ pub enum DiagnosticLevel {
 pub struct Diagnostic {
     path: PathBuf,
     level: DiagnosticLevel,
+    line: usize,
+    column: usize,
+    message: String,
+    surround: String,
 }
 
 struct DocBuilderError {
@@ -200,33 +215,20 @@ impl DocBuilderError {
 #[derive(Debug, Default, Clone)]
 pub struct DocBuilder<'s> {
     types: HashMap<&'s str, Type>,
+    hooks: HashMap<&'s str, Hook>,
     libraries: HashMap<&'s str, Library>,
     tbl_to_lib: HashMap<&'s str, &'s str>,
     tbl_to_type: HashMap<&'s str, &'s str>,
-    tbl_methods: HashMap<&'s str, Vec<Method>>,
-    tbl_tables: HashMap<&'s str, Vec<Table>>,
+    tbl_methods: HashMap<&'s str, HashMap<&'s str, Method>>,
+    tbl_tables: HashMap<&'s str, HashMap<&'s str, Table>>,
     lua_files: HashMap<&'s Path, LuaFile<'s>>,
-    diagnostics: Vec<Diagnostic>,
+    partial_section: PartialSection<'s>,
     current_file: LuaFile<'s>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'s> DocBuilder<'s> {
-    pub fn new() -> Self {
-        Self {
-            types: Default::default(),
-            libraries: Default::default(),
-            tbl_to_lib: Default::default(),
-            tbl_to_type: Default::default(),
-            tbl_methods: Default::default(),
-            tbl_tables: Default::default(),
-            lua_files: Default::default(),
-            diagnostics: Default::default(),
-            current_file: Default::default(),
-        }
-    }
-
     pub fn parse_file(&mut self, file: LuaFile<'s>) {
-        // TODO: warning if already exists
         self.lua_files.insert(file.path(), file);
         self.current_file = file;
         let mut parser = Parser::new(file.source);
@@ -235,13 +237,52 @@ impl<'s> DocBuilder<'s> {
                 Ok(section) => self.parse_section(section),
                 Err(err) => {
                     // TODO
+                    log::error!("{:?}", err);
                 }
             }
         }
     }
 
     pub fn finish(self) -> (Docs, Vec<Diagnostic>) {
-        todo!()
+        let mut docs = Docs::default();
+
+        // Insert hooks
+        for hook in self.hooks.values() {
+            docs.hooks.insert(hook.name.clone(), hook.clone());
+        }
+
+        // Insert types
+        for ty in self.types.into_values() {
+            docs.types.insert(ty.name.clone(), ty);
+        }
+
+        // Insert libraries
+        for lib in self.libraries.values() {
+            docs.libraries.insert(lib.name.clone(), lib.clone());
+        }
+
+        // Insert methods
+        for (tbl, methods) in self.tbl_methods.into_iter() {
+            println!("{:#?}", methods);
+            let methods_map = match self.tbl_to_lib.get(tbl) {
+                Some(lib) => &mut docs.libraries.get_mut(*lib).unwrap().methods,
+                None if tbl.contains("_meta") => &mut docs.types.get_mut(tbl).unwrap().meta_methods,
+                _ => &mut docs.types.get_mut(tbl).unwrap().methods,
+            };
+            for method in methods.into_values() {
+                methods_map.insert(method.name.clone(), method);
+            }
+        }
+
+        // Insert tables
+        for (tbl, tables) in self.tbl_tables.into_iter() {
+            let library = &mut docs.libraries.get_mut(tbl).unwrap();
+            for table in tables.into_values() {
+                library.tables.insert(table.name.clone(), table);
+            }
+        }
+
+        (docs, self.diagnostics)
     }
 
     fn parse_section(&mut self, section: Section<'_, 's>) {
@@ -254,6 +295,7 @@ impl<'s> DocBuilder<'s> {
         }
 
         log::debug!("Parsing section with class {:?}", section.class());
+        log::trace!("Section:\n{}", section.source());
         // TODO: Remove Result from all of this functions and push diagnostics instead
         let result = match section.class().map(Class::kind) {
             Some(ClassKind::Hook) => self.parse_hook(section),
@@ -262,7 +304,7 @@ impl<'s> DocBuilder<'s> {
             Some(ClassKind::Library) => self.parse_library(section),
             Some(ClassKind::Function) => self.parse_function(section),
             Some(ClassKind::Unknown) => Err(DocBuilderError::new(
-                section.line_number(),
+                0,
                 format!("Unknown section class: {:?}", section.class()),
             )),
             None => self.parse_not_specified(section),
@@ -284,15 +326,12 @@ impl<'s> DocBuilder<'s> {
             realm,
         };
 
-        // TODO
-        //if self.docs.hooks.contains_key(name.as_str()) {
-        //    return Err(DocBuilderError::new(
-        //        section.line_number(),
-        //        format!("Duplicate hook : {}", name),
-        //    ));
-        //}
+        if self.hooks.contains_key(name.as_str()) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
 
-        //self.docs.hooks.insert(name.to_string(), hook);
+        self.hooks.insert(name.as_str(), hook);
 
         Ok(())
     }
@@ -303,21 +342,31 @@ impl<'s> DocBuilder<'s> {
         let realm = attr_realm!(section, self.current_file.realm());
         let libtbls = attr_many!(section, AttributeKind::Libtbl(tbl) => tbl);
 
+        if self.types.contains_key(name.as_str()) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
+
+        for tbl in libtbls.clone() {
+            if self.tbl_to_type.contains_key(tbl.as_str()) {
+                // TODO: Diagnostic
+                return Ok(());
+            }
+        }
+
         for tbl in libtbls {
             self.tbl_to_type.insert(tbl.as_str(), name.as_str());
         }
 
-        // TODO
-        //self.docs.types.insert(
-        //    name.to_string(),
-        //    Type {
-        //        name: name.to_string(),
-        //        description,
-        //        realm,
-        //        methods: Default::default(),
-        //        meta_methods: Default::default(),
-        //    },
-        //);
+        let ty = Type {
+            name: name.as_str().to_owned(),
+            description,
+            realm,
+            methods: Default::default(),
+            meta_methods: Default::default(),
+        };
+
+        self.types.insert(name.as_str(), ty);
 
         Ok(())
     }
@@ -341,8 +390,14 @@ impl<'s> DocBuilder<'s> {
             realm,
             fields: fields.into_iter().map(|f| (f.name.clone(), f)).collect(),
         };
-        log::trace!("parsed table: {:#?}", table);
-        self.tbl_tables.entry(tbl).or_default().push(table);
+
+        let tables = self.tbl_tables.entry(tbl).or_default();
+        if tables.contains_key(name) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
+
+        tables.insert(name, table);
 
         Ok(())
     }
@@ -353,23 +408,33 @@ impl<'s> DocBuilder<'s> {
         let realm = attr_realm!(section, self.current_file.realm());
         let libtbls = attr_many!(section, AttributeKind::Libtbl(tbl) => tbl);
 
+        if self.libraries.contains_key(name.as_str()) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
+
         log::debug!("found library: {}", name);
+        for tbl in libtbls.clone() {
+            if self.tbl_to_lib.contains_key(tbl.as_str()) {
+                // TODO: Diagnostic
+                return Ok(());
+            }
+        }
+
         for tbl in libtbls {
             log::debug!("mapping tbl '{}' to library '{}'", tbl, name);
             self.tbl_to_lib.insert(tbl.as_str(), name.as_str());
         }
 
-        // TODO
-        //self.docs.libraries.insert(
-        //    name.to_string(),
-        //    Library {
-        //        name: name.to_string(),
-        //        description,
-        //        realm,
-        //        tables: Default::default(),
-        //        methods: Default::default(),
-        //    },
-        //);
+        let library = Library {
+            name: name.to_string(),
+            description,
+            realm,
+            tables: Default::default(),
+            methods: Default::default(),
+        };
+
+        self.libraries.insert(name.as_str(), library);
 
         Ok(())
     }
@@ -407,8 +472,15 @@ impl<'s> DocBuilder<'s> {
             deprecated: false,
         };
 
+        let methods = self.tbl_methods.entry(tbl).or_default();
+        if methods.contains_key(name) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
+
         log::debug!("found method: {} from {}", method.name, tbl);
-        self.tbl_methods.entry(tbl).or_default().push(method);
+        methods.insert(name, method);
+
         Ok(())
     }
 
@@ -424,6 +496,7 @@ impl<'s> DocBuilder<'s> {
                 "Method missing function line following it".to_string(),
             )
         })?;
+
         let (table_name, function_name) = function_line_to_table_and_function_name(function_line)
             .ok_or_else(|| {
             DocBuilderError::new(
@@ -432,46 +505,24 @@ impl<'s> DocBuilder<'s> {
             )
         })?;
 
-        let is_meta = table_name.contains("_meta");
+        let deprecated = description.as_str().to_lowercase().contains("deprecated");
         let method = Method {
             name: function_name.to_string(),
             description,
             parameters,
             returns,
             realm,
-            deprecated: false,
+            deprecated,
         };
 
-        //if let Some(lib_name) = self.tbl_to_lib.get(table_name) {
-        //    self.docs
-        //        .libraries
-        //        .get_mut(*lib_name)
-        //        .ok_or_else(|| {
-        //            DocBuilderError::new(
-        //                section.line_number(),
-        //                format!("Library not found: {}", lib_name),
-        //            )
-        //        })?
-        //        .methods
-        //        .insert(method.name.clone(), method);
-        //} else if let Some(ty_name) = self.tbl_to_type.get(table_name) {
-        //    let ty = self.docs.types.get_mut(*ty_name).ok_or_else(|| {
-        //        DocBuilderError::new(
-        //            section.line_number(),
-        //            format!("Type not found: {}", ty_name),
-        //        )
-        //    })?;
-        //    if is_meta {
-        //        ty.meta_methods.insert(method.name.clone(), method);
-        //    } else {
-        //        ty.methods.insert(method.name.clone(), method);
-        //    }
-        //} else {
-        //    return Err(DocBuilderError::new(
-        //        section.line_number(),
-        //        format!("Table not found: {}", table_name),
-        //    ));
-        //}
+        let methods = self.tbl_methods.entry(table_name).or_default();
+        if methods.contains_key(function_name) {
+            // TODO: Diagnostic
+            return Ok(());
+        }
+
+        log::debug!("found method: {} from {}", method.name, table_name);
+        methods.insert(function_name, method);
 
         Ok(())
     }

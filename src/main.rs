@@ -38,6 +38,9 @@ fn main() {
     match args.subcommand {
         Command::Parse(parse) => {
             println!("{:?}", parse);
+            let (docs, diags) = sfdoc::document_paths(&parse.paths).unwrap();
+            println!("{:#?}", docs);
+            println!("{:#?}", diags);
         }
     }
 }

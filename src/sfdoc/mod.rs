@@ -1,6 +1,6 @@
 mod builder;
 mod diagnostic;
-mod parser2;
+mod parser;
 mod source;
 
 use std::{
@@ -95,12 +95,14 @@ pub struct Return {
 
 pub fn document(files: impl Iterator<Item = LuaFile<'_>>) -> (Docs, Vec<Diagnostic>) {
     let mut builder = DocBuilder::default();
-
-    todo!()
+    for file in files {
+        builder.parse_file(file);
+    }
+    builder.finish()
 }
 
 pub fn document_paths(
-    paths: impl Iterator<Item = impl AsRef<Path>>,
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
 ) -> std::io::Result<(Docs, Vec<Diagnostic>)> {
     let mut files = Vec::new();
     for path in paths {
