@@ -1,9 +1,4 @@
-use std::str::Split;
-
 const DASH: char = '-';
-const DOUBLE: &str = "--";
-const TRIPLE: &str = "---";
-
 const HEADER: &str = "--- ";
 const ATTRIBUTE: &str = "-- ";
 const TRIPLE_DASH: &str = "---";
@@ -44,7 +39,12 @@ impl<'s> std::fmt::Display for Ident<'s> {
 }
 
 impl<'s> Ident<'s> {
-    pub fn new(value: &'s str) -> Result<Self, IdentParseError> {
+    fn new_unchecked(value: &'s str) -> Self {
+        debug_assert!(Self::parse(value).is_ok());
+        Ident { value }
+    }
+
+    pub fn parse(value: &'s str) -> Result<Self, IdentParseError> {
         if value.is_empty() {
             return Err(IdentParseError(value));
         }
@@ -52,11 +52,6 @@ impl<'s> Ident<'s> {
             return Err(IdentParseError(value));
         }
         Ok(Ident { value })
-    }
-
-    fn new_unchecked(value: &'s str) -> Self {
-        debug_assert!(Self::new(value).is_ok());
-        Ident { value }
     }
 
     pub fn as_str(&self) -> &'s str {
@@ -164,7 +159,7 @@ pub struct TypeUnion<'s> {
 }
 
 impl<'s> TypeUnion<'s> {
-    fn new(type_union: &'s str) -> Result<Self, TypeUnionParseError<'s>> {
+    fn parse(type_union: &'s str) -> Result<Self, TypeUnionParseError<'s>> {
         // Make sure that the type dont contain whitespace
         let (type_union, optional) = if type_union.ends_with('?') {
             (type_union.trim_end_matches('?'), true)
@@ -192,7 +187,96 @@ impl<'s> TypeUnion<'s> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Parameter {}
+pub struct Field<'s> {
+    name: Ident<'s>,
+    description: Description<'s>,
+}
+
+impl<'s> Field<'s> {
+    fn new(name: Ident<'s>, description: Description<'s>) -> Self {
+        Self { name, description }
+    }
+
+    pub fn name(&self) -> Ident<'s> {
+        self.name
+    }
+
+    pub fn description(&self) -> Description<'s> {
+        self.description
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Parameter<'s> {
+    name: Ident<'s>,
+    tunion: TypeUnion<'s>,
+    description: Description<'s>,
+}
+
+impl<'s> Parameter<'s> {
+    fn new(name: Ident<'s>, tunion: TypeUnion<'s>, description: Description<'s>) -> Self {
+        Self {
+            name,
+            tunion,
+            description,
+        }
+    }
+
+    pub fn name(&self) -> Ident<'s> {
+        self.name
+    }
+
+    pub fn type_union(&self) -> TypeUnion<'s> {
+        self.tunion
+    }
+
+    pub fn description(&self) -> Description<'s> {
+        self.description
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Return<'s> {
+    tunion: TypeUnion<'s>,
+    description: Description<'s>,
+}
+
+impl<'s> Return<'s> {
+    fn new(tunion: TypeUnion<'s>, description: Description<'s>) -> Self {
+        Self {
+            tunion,
+            description,
+        }
+    }
+
+    pub fn type_union(&self) -> TypeUnion<'s> {
+        self.tunion
+    }
+
+    pub fn description(&self) -> Description<'s> {
+        self.description
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Unknown<'s> {
+    key: Ident<'s>,
+    value: &'s str,
+}
+
+impl<'s> Unknown<'s> {
+    fn new(key: Ident<'s>, value: &'s str) -> Self {
+        Self { key, value }
+    }
+
+    pub fn key(&self) -> Ident<'s> {
+        self.key
+    }
+
+    pub fn value(&self) -> &'s str {
+        self.value
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum AttributeParseError<'s> {
@@ -202,7 +286,6 @@ pub enum AttributeParseError<'s> {
     InvalidField(IdentParseError<'s>),
     InvalidParamTy(TypeUnionParseError<'s>),
     InvalidReturnTy(TypeUnionParseError<'s>),
-    InvalidAttributeLine(&'s str),
     NotAttributeLine(&'s str),
 }
 
@@ -215,9 +298,6 @@ impl<'s> std::fmt::Display for AttributeParseError<'s> {
             AttributeParseError::InvalidField(err) => write!(f, "Invalid field: {}", err),
             AttributeParseError::InvalidParamTy(err) => write!(f, "Invalid param ty: {}", err),
             AttributeParseError::InvalidReturnTy(err) => write!(f, "Invalid return ty: {}", err),
-            AttributeParseError::InvalidAttributeLine(err) => {
-                write!(f, "Invalid attribute line: {}", err)
-            }
             AttributeParseError::NotAttributeLine(err) => {
                 write!(f, "Not an attribute line: {}", err)
             }
@@ -231,7 +311,9 @@ impl<'s> std::error::Error for AttributeParseError<'s> {}
 pub enum AttributeKind<'s> {
     /// Header attribute. Example:
     /// --- This is the description
-    Header { description: Description<'s> },
+    Header {
+        description: Description<'s>,
+    },
     /// Name attribute. Example:
     /// -- @name MyName
     Name {
@@ -253,30 +335,20 @@ pub enum AttributeKind<'s> {
     /// Shared realm. Example:
     /// -- @shared
     Shared,
-    Field {
-        name: Ident<'s>,
-        description: Description<'s>,
-    },
+    Field(Field<'s>),
     /// Parameter attribute. Example:
     /// -- @param type name this is the description
-    Parameter {
-        ty: TypeUnion<'s>,
-        name: Ident<'s>,
-        description: Description<'s>,
-    },
+    Parameter(Parameter<'s>),
     /// Return attribute. Example:
     /// -- @return type this is the description
-    Return {
-        ty: TypeUnion<'s>,
-        description: Description<'s>,
-    },
+    Return(Return<'s>),
     /// A description fragment. This is a line that did not have a key. Example:
     /// --- This is a description
     /// -- This is also a description
     Description(Description<'s>),
     /// Unknown attribute. Example:
     /// -- @xyz ajwld awdjlaw
-    Unknown { key: Ident<'s>, value: &'s str },
+    Unknown(Unknown<'s>),
 }
 
 impl<'s> AttributeKind<'s> {
@@ -326,17 +398,19 @@ impl<'s> AttributeKind<'s> {
             "name" => {
                 let (name, description) = value.split_once(' ').unwrap_or((value, ""));
                 Ok(Self::Name {
-                    name: Ident::new_unchecked(name),
+                    name: Ident::parse(name).map_err(AttributeParseError::InvalidName)?,
                     description: Description::new(description),
                 })
             }
             "class" => {
                 let class = value.split_once(' ').unwrap_or((value, "")).0;
-                Ok(Self::Class(Class::from(Ident::new_unchecked(class))))
+                let ident = Ident::parse(class).map_err(AttributeParseError::InvalidClass)?;
+                Ok(Self::Class(Class::from(ident)))
             }
             "libtbl" => {
                 let libtbl = value.split_once(' ').unwrap_or((value, "")).0;
-                Ok(Self::Libtbl(Ident::new_unchecked(libtbl)))
+                let ident = Ident::parse(libtbl).map_err(AttributeParseError::InvalidLibtbl)?;
+                Ok(Self::Libtbl(ident))
             }
             // TODO: Check that the value is empty
             "server" => Ok(Self::Server),
@@ -347,10 +421,11 @@ impl<'s> AttributeKind<'s> {
                 let name = iter.next().unwrap_or_default();
                 let description = iter.as_str();
 
-                Ok(Self::Field {
-                    name: Ident::new_unchecked(name),
-                    description: Description::from(description),
-                })
+                let name = Ident::parse(name).map_err(AttributeParseError::InvalidField)?;
+                let description = Description::from(description);
+                let field = Field::new(name, description);
+
+                Ok(Self::Field(field))
             }
             "param" => {
                 let mut iter = value.split_ascii_whitespace();
@@ -358,26 +433,30 @@ impl<'s> AttributeKind<'s> {
                 let name = iter.next().unwrap_or_default();
                 let description = iter.as_str();
 
-                Ok(Self::Parameter {
-                    ty: TypeUnion::new(tunion).map_err(AttributeParseError::InvalidParamTy)?,
-                    name: Ident::new_unchecked(name),
-                    description: Description::new(description),
-                })
+                let name = Ident::new_unchecked(name);
+                let tunion =
+                    TypeUnion::parse(tunion).map_err(AttributeParseError::InvalidParamTy)?;
+                let description = Description::new(description);
+                let parameter = Parameter::new(name, tunion, description);
+
+                Ok(Self::Parameter(parameter))
             }
             "return" => {
                 let mut iter = value.split_ascii_whitespace();
                 let tunion = iter.next().unwrap_or_default();
                 let description = iter.as_str();
 
-                Ok(Self::Return {
-                    ty: TypeUnion::new(tunion).map_err(AttributeParseError::InvalidReturnTy)?,
-                    description: Description::new(description),
-                })
+                let tunion =
+                    TypeUnion::parse(tunion).map_err(AttributeParseError::InvalidReturnTy)?;
+                let description = Description::from(description);
+                let ret = Return::new(tunion, description);
+
+                Ok(Self::Return(ret))
             }
-            _ => Ok(Self::Unknown {
-                key: Ident::new_unchecked(key),
+            _ => Ok(Self::Unknown(Unknown::new(
+                Ident::new_unchecked(key),
                 value,
-            }),
+            ))),
         }
     }
 }
@@ -396,174 +475,5 @@ impl<'s> Attribute<'s> {
 
     pub fn kind(&self) -> &AttributeKind<'s> {
         &self.kind
-    }
-
-    pub fn line(&self) -> &'s str {
-        self.value
-    }
-
-    pub fn line_number(&self) -> usize {
-        0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_type_union_single_type() {
-        let tunion = TypeUnion::new("foo").unwrap();
-        assert_eq!(tunion.optional(), false);
-        assert_eq!(tunion.types().count(), 1);
-        assert_eq!(tunion.types().next(), Some(Ident::new("foo").unwrap()));
-    }
-
-    #[test]
-    fn parse_type_union_double_type() {
-        let tunion = TypeUnion::new("foo|bar").unwrap();
-        assert_eq!(tunion.optional(), false);
-        assert_eq!(tunion.types().count(), 2);
-        assert_eq!(tunion.types().next(), Some(Ident::new("foo").unwrap()));
-        assert_eq!(
-            tunion.types().skip(1).next(),
-            Some(Ident::new("bar").unwrap())
-        );
-    }
-
-    #[test]
-    fn parse_type_union_double_type_optional() {
-        let tunion = TypeUnion::new("foo|bar?").unwrap();
-        assert_eq!(tunion.optional(), true);
-        assert_eq!(tunion.types().count(), 2);
-        assert_eq!(tunion.types().next(), Some(Ident::new("foo").unwrap()));
-        assert_eq!(
-            tunion.types().skip(1).next(),
-            Some(Ident::new("bar").unwrap())
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn parse_type_union_double_with_remaining() {
-        TypeUnion::new("foo|bar baz").unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn parse_type_union_double_with_remaining_optional() {
-        TypeUnion::new("foo|bar? baz").unwrap();
-    }
-
-    #[test]
-    fn parse_attribute_name_valid() {
-        let kind = AttributeKind::new("-- @name foo").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Name {
-                name: Ident::new("foo").unwrap(),
-                description: Description::default()
-            }
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn parse_attribute_name_invalid() {
-        AttributeKind::new("-- @name foo bar").unwrap();
-    }
-
-    #[test]
-    fn parse_attribute_class_valid() {
-        let kind = AttributeKind::new("-- @class foo").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Class(Class::from(Ident::new("foo").unwrap()))
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn parse_attribute_class() {
-        AttributeKind::new("-- @class foo bar").unwrap();
-    }
-
-    #[test]
-    fn parse_attribute_libtbl_valid() {
-        let kind = AttributeKind::new("-- @libtbl foo").unwrap();
-        assert_eq!(kind, AttributeKind::Libtbl(Ident::new("foo").unwrap()));
-    }
-
-    #[test]
-    #[should_panic]
-    fn parse_attribute_libtbl_invalid() {
-        AttributeKind::new("-- @libtbl foo bar").unwrap();
-    }
-
-    #[test]
-    fn parse_attribute_server_valid() {
-        let kind = AttributeKind::new("-- @server").unwrap();
-        assert_eq!(kind, AttributeKind::Server);
-    }
-
-    #[test]
-    fn parse_attribute_client_valid() {
-        let kind = AttributeKind::new("-- @client").unwrap();
-        assert_eq!(kind, AttributeKind::Client);
-    }
-
-    #[test]
-    fn parse_attribute_shared_valid() {
-        let kind = AttributeKind::new("-- @shared").unwrap();
-        assert_eq!(kind, AttributeKind::Shared);
-    }
-
-    #[test]
-    fn parse_attribute_parameter_valid() {
-        let kind = AttributeKind::new("-- @param foo bar desc desc").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Parameter {
-                ty: TypeUnion::new("foo").unwrap(),
-                name: Ident::new("bar").unwrap(),
-                description: Description::new("desc desc"),
-            }
-        )
-    }
-
-    #[test]
-    fn parse_attribute_return_valid() {
-        let kind = AttributeKind::new("-- @return foo bar desc desc").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Return {
-                ty: TypeUnion::new("foo").unwrap(),
-                description: Description::new("bar desc desc"),
-            }
-        )
-    }
-
-    #[test]
-    fn parse_attribute_unknown_valid_1() {
-        let kind = AttributeKind::new("-- @libtl foo").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Unknown {
-                key: Ident::new("libtl").unwrap(),
-                value: "foo"
-            }
-        );
-    }
-
-    #[test]
-    fn parse_attribute_unknown_valid_2() {
-        let kind = AttributeKind::new("-- @libtl foo bar").unwrap();
-        assert_eq!(
-            kind,
-            AttributeKind::Unknown {
-                key: Ident::new("libtl").unwrap(),
-                value: "foo bar"
-            }
-        );
     }
 }

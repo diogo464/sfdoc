@@ -5,14 +5,16 @@
 #![feature(stmt_expr_attributes)]
 #![feature(anonymous_lifetime_in_impl_trait)]
 
-pub mod annotations;
-pub mod sfdoc;
+pub mod meta;
+//pub mod sfdoc;
+pub mod snippet;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
-use annotations::LibraryKind;
 use clap::{Parser, Subcommand, ValueHint};
-use sfdoc::{Docs, Library};
+use meta::LibraryKind;
+use sfdoc::Docs;
+use snippet::Snippets;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -87,24 +89,33 @@ fn command_annotations(annotations: AnnotationsArgs) -> anyhow::Result<()> {
     let mut buffer = Vec::<u8>::with_capacity(512 * 1024);
 
     std::fs::create_dir_all(&basedir)?;
-    for ty in docs.types.values() {
-        let filename = format!("type_{}.lua", ty.name);
+    for ty in docs.types() {
+        let filename = format!("type_{}.lua", ty.name());
         buffer.clear();
-        annotations::generate_ty(&mut buffer, ty)?;
+        meta::generate_ty(&mut buffer, ty)?;
         std::fs::write(basedir.join(filename), &buffer)?;
     }
 
-    for lib in docs.libraries.values() {
-        let filename = format!("{}.lua", lib.name);
-        let library_kind = if lib.name == "builtins" {
+    for lib in docs.libraries() {
+        let filename = format!("{}.lua", lib.name());
+        let library_kind = if lib.name() == "builtins" {
             LibraryKind::Prelude
         } else {
             LibraryKind::Normal
         };
         buffer.clear();
-        annotations::generate_lib(&mut buffer, lib, library_kind)?;
+        meta::generate_lib(&mut buffer, lib, library_kind)?;
         std::fs::write(basedir.join(filename), &buffer)?;
     }
+
+    let mut snippets = Snippets::default();
+    for hook in docs.hooks() {
+        snippets.add(hook);
+    }
+
+    buffer.clear();
+    serde_json::to_writer_pretty(&mut buffer, &snippets)?;
+    std::fs::write(basedir.join("hooks.code-snippets"), &buffer)?;
 
     Ok(())
 }

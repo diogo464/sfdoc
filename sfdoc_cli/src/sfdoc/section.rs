@@ -283,19 +283,15 @@ impl<'s> SectionParser<'s> {
                     None => self.section.realm = Some(Realm::Shared),
                     Some(_) => return Err(SectionParseError::DuplicateRealm),
                 },
-                AttributeKind::Field { name, description } => self.section.fields.push(Field {
-                    name: name.to_string(),
-                    description: description.to_string(),
+                AttributeKind::Field(f) => self.section.fields.push(Field {
+                    name: f.name().to_string(),
+                    description: f.description().to_string(),
                 }),
-                AttributeKind::Parameter {
-                    ty,
-                    name,
-                    description,
-                } => {
-                    let name = name.to_string();
-                    let parameter_type = type_union_to_type(ty);
-                    let optional = ty.optional();
-                    let mut description = description.to_string();
+                AttributeKind::Parameter(p) => {
+                    let name = p.name().to_string();
+                    let parameter_type = type_union_to_type(&p.type_union());
+                    let optional = p.type_union().optional();
+                    let mut description = p.description().to_string();
 
                     while let Some(attr) = iter.peek() {
                         match attr.kind() {
@@ -316,10 +312,10 @@ impl<'s> SectionParser<'s> {
                         description,
                     })
                 }
-                AttributeKind::Return { ty, description } => {
-                    let parameter_type = type_union_to_type(ty);
-                    let optional = ty.optional();
-                    let mut description = description.to_string();
+                AttributeKind::Return(ret) => {
+                    let parameter_type = type_union_to_type(&ret.type_union());
+                    let optional = ret.type_union().optional();
+                    let mut description = ret.description().to_string();
 
                     while let Some(attr) = iter.peek() {
                         match attr.kind() {
@@ -345,8 +341,8 @@ impl<'s> SectionParser<'s> {
                     }
                     self.section.top_level_description.push_str(desc.as_str());
                 }
-                AttributeKind::Unknown { key, .. } => {
-                    return Err(SectionParseError::UnknownAttribute(*key));
+                AttributeKind::Unknown(unknown) => {
+                    return Err(SectionParseError::UnknownAttribute(unknown.key()));
                 }
             }
         }
@@ -501,7 +497,7 @@ fn parse_table_name<'s>(
         Some(name) => name
             .as_str()
             .split_once('.')
-            .map(|(tbl, name)| (Ident::new(tbl).unwrap(), Ident::new(name).unwrap()))
+            .map(|(tbl, name)| (Ident::parse(tbl).unwrap(), Ident::parse(name).unwrap()))
             .ok_or_else(|| SectionParseError::InvalidTableName(name)),
         None => Err(SectionParseError::MissingName),
     }
@@ -514,7 +510,7 @@ fn parse_function_name<'s>(
         Some(name) => name
             .as_str()
             .split_once('.')
-            .map(|(tbl, name)| (Ident::new(tbl).unwrap(), Ident::new(name).unwrap()))
+            .map(|(tbl, name)| (Ident::parse(tbl).unwrap(), Ident::parse(name).unwrap()))
             .ok_or_else(|| SectionParseError::InvalidFunctionName(name)),
         None => parse_next_line(section),
     }
@@ -541,7 +537,7 @@ fn parse_next_line<'s>(
 
     let func = &func[..min];
     Ok((
-        Ident::new(tbl).map_err(|_| SectionParseError::InvalidFunctionLine(line))?,
-        Ident::new(func).map_err(|_| SectionParseError::InvalidFunctionLine(line))?,
+        Ident::parse(tbl).map_err(|_| SectionParseError::InvalidFunctionLine(line))?,
+        Ident::parse(func).map_err(|_| SectionParseError::InvalidFunctionLine(line))?,
     ))
 }
