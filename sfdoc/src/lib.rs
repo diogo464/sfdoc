@@ -1,4 +1,5 @@
 #![feature(never_type)]
+#![feature(assert_matches)]
 #![feature(anonymous_lifetime_in_impl_trait)]
 
 use std::{

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::source::Location;
 
@@ -14,7 +14,6 @@ pub struct Diagnostic {
     level: DiagnosticLevel,
     location: Location,
     message: String,
-    body: String,
 }
 
 impl Diagnostic {
@@ -23,18 +22,16 @@ impl Diagnostic {
         level: DiagnosticLevel,
         location: Location,
         message: impl Into<String>,
-        body: impl Into<String>,
     ) -> Self {
         Self {
             path,
             level,
             location,
             message: message.into(),
-            body: body.into(),
         }
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
@@ -48,9 +45,5 @@ impl Diagnostic {
 
     pub fn message(&self) -> &str {
         self.message.as_ref()
-    }
-
-    pub fn body(&self) -> &str {
-        self.body.as_ref()
     }
 }

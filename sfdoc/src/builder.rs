@@ -3,12 +3,30 @@ use std::{collections::HashMap, path::Path};
 use crate::{
     item,
     section::{
-        FieldSection, HookSection, LibrarySection, MethodSection, Section, SectionBuilder,
+        self, FieldSection, HookSection, LibrarySection, MethodSection, Section, SectionBuilder,
         SectionDiagnostic, SectionStatus, TableSection, TypeSection,
     },
-    source::{Source, SourceIndexer, SourceReader},
-    Diagnostic, Docs, Field, Hook, Library, LuaFile, Method, Table, Type,
+    source::{Location, Source, SourceIndexer, SourceReader},
+    Diagnostic, DiagnosticLevel, Docs, Field, Hook, Library, LuaFile, Method, Table, Type,
 };
+
+struct DocBuilderSectionDiagnosticEmitter<'a> {
+    path: &'a Path,
+    files: &'a HashMap<&'a Path, DocBuilderFile<'a>>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+}
+
+impl<'a> section::SectionDiagnosticEmitter for DocBuilderSectionDiagnosticEmitter<'a> {
+    fn emit(&mut self, diagnostic: section::SectionDiagnostic) {
+        let indexer = &self.files[self.path].indexer;
+        self.diagnostics.push(Diagnostic::new(
+            self.path.to_owned(),
+            crate::DiagnosticLevel::Warning,
+            indexer.locate(diagnostic.span().begin()),
+            diagnostic.message(),
+        ));
+    }
+}
 
 #[derive(Debug, Clone)]
 struct DocBuilderFile<'s> {
@@ -49,29 +67,33 @@ impl<'s> DocBuilder<'s> {
         );
 
         log::info!("Parsing file {}", file.path.display());
-
         self.current_file = Some(file.path);
+
         let source = Source::new(file.source);
-        let mut reader = SourceReader::new(source);
-        let mut section_builder = SectionBuilder::new(source, file.realm());
-        while !reader.is_eof() {
-            match reader.parse::<item::Item, _>() {
-                Ok(item) => {
-                    self.diagnostic_item(&item);
-                    match section_builder.feed_item(item) {
-                        SectionStatus::FeedMore => {}
-                        SectionStatus::Complete(section) => {
-                            self.parse_section(section);
-                            for diagnostic in section_builder.drain_diagnostics() {
-                                self.diagnostic_section(diagnostic);
-                            }
-                        }
+        for result in item::ItemParser::new(source) {
+            let item = match result {
+                Ok(item) => item,
+                Err(err) => {
+                    self.diagnostic_item_parse_error(err);
+                    continue;
+                }
+            };
+
+            let mut emitter = DocBuilderSectionDiagnosticEmitter {
+                path: file.path,
+                files: &self.files,
+                diagnostics: &mut self.diagnostics,
+            };
+
+            match item {
+                item::Item2::Section(section) => {
+                    match section::build_section(source, section, file.realm(), &mut emitter) {
+                        Some(section) => self.parse_section(section),
+                        None => log::warn!("Failed to build section at {}", file.path.display()),
                     }
                 }
-                Err(err) => {
-                    reader.skip_line();
-                    self.diagnostic_item_parse_error(err);
-                }
+                item::Item2::SourceLine(_) => {}
+                item::Item2::UnmatchedAttribute(_) => {}
             }
         }
     }
@@ -292,28 +314,15 @@ impl<'s> DocBuilder<'s> {
 }
 
 impl<'s> DocBuilder<'s> {
-    fn diagnostic_item(&mut self, item: &item::Item) {}
-
     fn diagnostic_item_parse_error(&mut self, err: item::ItemParseError) {
         let file = self.get_current_file();
         let location = file.indexer.locate(err.span().begin());
-        log::error!(
-            "File {}\n{:?}\n{}",
-            file.path.display(),
+        self.diagnostics.push(Diagnostic::new(
+            file.path.to_owned(),
+            DiagnosticLevel::Error,
             location,
-            err.message()
-        );
-    }
-
-    fn diagnostic_section(&mut self, diagnostic: SectionDiagnostic) {
-        let file = self.get_current_file();
-        let location = file.indexer.locate(diagnostic.span().begin());
-        log::error!(
-            "File {}\nLocation {:?}\n{}",
-            file.path.display(),
-            location,
-            diagnostic.message()
-        );
+            err.message(),
+        ));
     }
 
     fn diagnostic_check_unknown_types(&mut self) {

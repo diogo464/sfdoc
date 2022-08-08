@@ -55,6 +55,12 @@ impl Spanned for Span {
     }
 }
 
+impl From<Position> for Span {
+    fn from(position: Position) -> Self {
+        Span::new(position, position)
+    }
+}
+
 impl Span {
     pub fn new(begin: Position, end: Position) -> Self {
         Self {
@@ -224,6 +230,10 @@ impl<'s> SourceReader<'s> {
         let _ = self.read_line();
     }
 
+    pub fn skip_while(&mut self, pred: impl Fn(char) -> bool) {
+        let _ = self.read_while(pred);
+    }
+
     pub fn skip_n(&mut self, n: usize) {
         let mut iter = self.remaining.chars();
         for _ in 0..n {
@@ -237,7 +247,7 @@ impl<'s> SourceReader<'s> {
     }
 
     pub fn advance(&mut self, position: Position) {
-        debug_assert!(position.0 <= self.position().0);
+        debug_assert!(position.0 >= self.position().0);
         let offset = position.0 - self.position().0;
         debug_assert!(offset <= self.remaining.len() as u32);
         self.remaining = &self.remaining[offset as usize..];

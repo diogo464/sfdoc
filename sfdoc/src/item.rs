@@ -1,9 +1,6 @@
-use crate::source::{Parse, Position, SourceStream, Span, Spanned};
+use crate::source::{Parse, Source, SourceReader, SourceStream, Span, Spanned};
 
 const PREFIX_COMMENT: &str = "--";
-
-#[derive(Debug)]
-pub struct IdentParseError(Position);
 
 /// Ident is a string representing an identifier.
 /// This is a string(alphanum + '_' + '.') without spaces. Example:
@@ -37,6 +34,9 @@ impl Parse for Ident {
     }
 }
 
+/// Text is a, possibly empty, sequence of characaters.
+/// Parsing Text will consume all characaters until the end of the line, not including the newline
+/// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Text {
     span: Span,
@@ -57,6 +57,93 @@ impl Parse for Text {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum DescriptionInner {
+    Single(Text),
+    Many(Vec<Text>),
+}
+
+enum DescriptionInnerSpanIter<'a> {
+    Single(Option<Span>),
+    Many(std::slice::Iter<'a, Text>),
+}
+
+impl<'a> Iterator for DescriptionInnerSpanIter<'a> {
+    type Item = Span;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DescriptionInnerSpanIter::Single(span) => span.take(),
+            DescriptionInnerSpanIter::Many(iter) => iter.next().map(|text| text.span()),
+        }
+    }
+}
+
+/// A description is a set of [`Text`] that could span multiple lines.
+/// Parsing a Description will first consume all characaters until the end of the line, not including the newline itself.
+/// Then it will try to consume all lines after, if they are a comment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Description(DescriptionInner);
+
+impl Spanned for Description {
+    fn span(&self) -> Span {
+        match self.0 {
+            DescriptionInner::Single(ref t) => t.span(),
+            DescriptionInner::Many(ref v) => {
+                debug_assert!(!v.is_empty());
+                let first = v[0].span();
+                let last = v[v.len() - 1].span();
+                first.join(last)
+            }
+        }
+    }
+}
+
+impl Description {
+    pub fn spans(&self) -> impl Iterator<Item = Span> + '_ {
+        match self.0 {
+            DescriptionInner::Single(text) => DescriptionInnerSpanIter::Single(Some(text.span())),
+            DescriptionInner::Many(ref vec) => DescriptionInnerSpanIter::Many(vec.iter()),
+        }
+    }
+}
+
+impl Parse for Description {
+    type ParseError = !;
+
+    fn parse(stream: SourceStream) -> Result<Self, Self::ParseError> {
+        let first_text = stream.parse::<Text, _>().unwrap();
+        let mut description = Description(DescriptionInner::Single(first_text));
+
+        loop {
+            let mut lookahead_stream = stream.clone();
+            lookahead_stream.skip_line(); // This consumes the newline not consumed by Text::parse
+                                          // above and bellow.
+            lookahead_stream.skip_whitespace();
+            let line = lookahead_stream.peek_str();
+            if line.starts_with("---") || (line.starts_with("--") && !line.starts_with("-- @")) {
+                lookahead_stream.skip_while(|c| c == '-');
+                lookahead_stream.skip_whitespace();
+                let extra_text = lookahead_stream.parse::<Text, _>().unwrap();
+                stream.advance(lookahead_stream.position());
+                match description.0 {
+                    DescriptionInner::Single(text) => {
+                        description.0 = DescriptionInner::Many(vec![text, extra_text]);
+                    }
+                    DescriptionInner::Many(ref mut vec) => vec.push(extra_text),
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(description)
+    }
+}
+
+/// Path is an identifier that might be prefixed by a table identifier.
+/// Example:
+/// `myfunction` or `mytable.myfunction`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Path {
     table: Option<Ident>,
@@ -90,7 +177,14 @@ impl Parse for Path {
     type ParseError = ItemParseError;
 
     fn parse(stream: SourceStream) -> Result<Self, Self::ParseError> {
-        let first = stream.parse::<Ident, _>()?;
+        let (_, first) = stream.read_while(|c| Ident::valid_char(c) && c != '.');
+        if first.is_empty() {
+            return Err(ItemParseError::new(
+                first,
+                "path cannot have empty table part",
+            ));
+        }
+        let first = Ident::new(first);
         match stream.peek_char() {
             Some('.') => {
                 stream.skip_char();
@@ -178,55 +272,6 @@ impl Parse for Key {
         };
         let span = Span::new(start, ident.span().end());
         Ok(Self::new(kind, ident, span))
-    }
-}
-
-#[derive(Debug, Clone)]
-/// A key-value pair.
-/// Example:
-/// `@key value`
-/// or
-/// `@key`
-/// or
-/// `@param number|string? value this is a description`
-pub struct KV<V> {
-    key: Key,
-    value: V,
-}
-
-impl<V: Spanned> Spanned for KV<V> {
-    fn span(&self) -> Span {
-        self.key.span().join(self.value.span())
-    }
-}
-
-// TODO: delete later, not required
-impl<V: Parse<ParseError = ItemParseError> + std::fmt::Debug> Parse for KV<V> {
-    type ParseError = ItemParseError;
-
-    fn parse(stream: SourceStream) -> Result<Self, Self::ParseError> {
-        let key = stream.parse()?;
-        stream.skip_whitespace();
-        let value = stream.parse()?;
-        Ok(KV::new(key, value))
-    }
-}
-
-impl<V> KV<V> {
-    fn new(key: Key, value: V) -> Self {
-        Self { key, value }
-    }
-
-    pub fn key(&self) -> &Key {
-        &self.key
-    }
-
-    pub fn value(&self) -> &V {
-        &self.value
-    }
-
-    pub fn split(self) -> (Key, V) {
-        (self.key, self.value)
     }
 }
 
@@ -363,22 +408,22 @@ impl Parse for TypeUnion {
 
 #[derive(Debug, Clone)]
 pub struct Field {
-    path: Path,
-    description: Text,
+    name: Ident,
+    description: Description,
 }
-impl_spanned!(Field, self => path + description);
+impl_spanned!(Field, self => name + description);
 
 impl Field {
-    fn new(path: Path, description: Text) -> Self {
-        Self { path, description }
+    fn new(name: Ident, description: Description) -> Self {
+        Self { name, description }
     }
 
-    pub fn path(&self) -> Path {
-        self.path
+    pub fn name(&self) -> Ident {
+        self.name
     }
 
-    pub fn description(&self) -> Text {
-        self.description
+    pub fn description(&self) -> &Description {
+        &self.description
     }
 }
 
@@ -395,13 +440,13 @@ impl Parse for Field {
 #[derive(Debug, Clone)]
 pub struct Parameter {
     name: Ident,
-    description: Text,
+    description: Description,
     type_union: TypeUnion,
 }
 impl_spanned!(Parameter, self => type_union + description);
 
 impl Parameter {
-    fn new(name: Ident, description: Text, type_union: TypeUnion) -> Self {
+    fn new(name: Ident, description: Description, type_union: TypeUnion) -> Self {
         Self {
             name,
             description,
@@ -413,8 +458,8 @@ impl Parameter {
         self.name
     }
 
-    pub fn description(&self) -> Text {
-        self.description
+    pub fn description(&self) -> &Description {
+        &self.description
     }
 
     pub fn type_union(&self) -> &TypeUnion {
@@ -438,12 +483,12 @@ impl Parse for Parameter {
 #[derive(Debug, Clone)]
 pub struct Return {
     type_union: TypeUnion,
-    description: Text,
+    description: Description,
 }
 impl_spanned!(Return, self => type_union + description);
 
 impl Return {
-    fn new(type_union: TypeUnion, description: Text) -> Self {
+    fn new(type_union: TypeUnion, description: Description) -> Self {
         Self {
             type_union,
             description,
@@ -454,8 +499,8 @@ impl Return {
         &self.type_union
     }
 
-    pub fn description(&self) -> Text {
-        self.description
+    pub fn description(&self) -> &Description {
+        &self.description
     }
 }
 
@@ -465,6 +510,55 @@ impl Parse for Return {
         let type_union = stream.parse()?;
         let description = stream.parse().unwrap();
         Ok(Self::new(type_union, description))
+    }
+}
+
+#[derive(Debug, Clone)]
+/// A key-value pair.
+/// Example:
+/// `@key value`
+/// or
+/// `@key`
+/// or
+/// `@param number|string? value this is a description`
+pub struct KV<V> {
+    key: Key,
+    value: V,
+}
+
+impl<V: Spanned> Spanned for KV<V> {
+    fn span(&self) -> Span {
+        self.key.span().join(self.value.span())
+    }
+}
+
+// TODO: delete later, not required
+impl<V: Parse<ParseError = ItemParseError> + std::fmt::Debug> Parse for KV<V> {
+    type ParseError = ItemParseError;
+
+    fn parse(stream: SourceStream) -> Result<Self, Self::ParseError> {
+        let key = stream.parse()?;
+        stream.skip_whitespace();
+        let value = stream.parse()?;
+        Ok(KV::new(key, value))
+    }
+}
+
+impl<V> KV<V> {
+    fn new(key: Key, value: V) -> Self {
+        Self { key, value }
+    }
+
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+
+    pub fn value(&self) -> &V {
+        &self.value
+    }
+
+    pub fn split(self) -> (Key, V) {
+        (self.key, self.value)
     }
 }
 
@@ -604,10 +698,257 @@ impl Parse for Item {
     }
 }
 
+pub type NameAttr = Attr<Path>;
+pub type ClassAttr = Attr<Class>;
+pub type LibtblAttr = Attr<Ident>;
+pub type ServerAttr = Attr<()>;
+pub type ClientAttr = Attr<()>;
+pub type SharedAttr = Attr<()>;
+pub type FieldAttr = Attr<Field>;
+pub type ParamAttr = Attr<Parameter>;
+pub type ReturnAttr = Attr<Return>;
+pub type UnknownAttr = Attr<()>;
+
+#[derive(Debug, Clone)]
+pub struct Attr<V> {
+    key: Key,
+    value: V,
+    description: Description,
+}
+
+impl<V> Attr<V> {
+    fn new(key: Key, value: V, description: Description) -> Self {
+        Self {
+            key,
+            value,
+            description,
+        }
+    }
+
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+
+    pub fn value(&self) -> &V {
+        &self.value
+    }
+
+    pub fn description(&self) -> &Description {
+        &self.description
+    }
+
+    pub fn split(self) -> (Key, V, Description) {
+        (self.key, self.value, self.description)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Attribute {
+    /// `@name`
+    Name(NameAttr),
+    /// `@class`
+    Class(ClassAttr),
+    /// `@libtbl`
+    Libtbl(LibtblAttr),
+    /// `@server`
+    Server(ServerAttr),
+    /// `@client`
+    Client(ClientAttr),
+    /// `@shared`
+    Shared(SharedAttr),
+    /// `@field`
+    Field(FieldAttr),
+    /// `@param`
+    Parameter(ParamAttr),
+    /// `@return`
+    Return(ReturnAttr),
+    /// `@unknown`
+    Unknown(UnknownAttr),
+}
+
+impl Parse for Attribute {
+    type ParseError = ItemParseError;
+
+    fn parse(stream: SourceStream) -> Result<Self, Self::ParseError> {
+        match stream.peek_char() {
+            Some('@') => {}
+            Some(_) | None => {
+                return Err(ItemParseError::new(
+                    Span::from(stream.position()),
+                    "Expected '@' while parsing attribute",
+                ))
+            }
+        };
+
+        let key = stream.parse::<Key, _>()?;
+        stream.skip_whitespace();
+        match key.kind {
+            KeyKind::Name => {
+                let value = stream.parse::<Path, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Name(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Class => {
+                let value = stream.parse::<Class, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Class(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Libtbl => {
+                let value = stream.parse::<Ident, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Libtbl(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Server => {
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Server(Attr::new(key, (), desciption)))
+            }
+            KeyKind::Client => {
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Client(Attr::new(key, (), desciption)))
+            }
+            KeyKind::Shared => {
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Shared(Attr::new(key, (), desciption)))
+            }
+            KeyKind::Field => {
+                let value = stream.parse::<Field, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Field(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Param => {
+                let value = stream.parse::<Parameter, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Parameter(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Return => {
+                let value = stream.parse::<Return, _>()?;
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Return(Attr::new(key, value, desciption)))
+            }
+            KeyKind::Unknown => {
+                let desciption = stream.parse::<Description, _>().unwrap();
+                Ok(Attribute::Unknown(Attr::new(key, (), desciption)))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Section {
+    // The span containing the entire section, but not source_line.
+    span: Span,
+    // The description after the `---` that begin a header
+    header: Description,
+    attributes: Vec<Attribute>,
+    /// Span for the line of source code following this documentation section
+    source_line: Span,
+}
+impl_spanned!(Section);
+
+impl Section {
+    pub fn header(&self) -> &Description {
+        &self.header
+    }
+
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+
+    pub fn source_line(&self) -> Span {
+        self.source_line
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Item2 {
+    Section(Section),
+    SourceLine(Span),
+    UnmatchedAttribute(Attribute),
+}
+
+pub struct ItemParser<'a> {
+    reader: SourceReader<'a>,
+}
+
+impl<'a> ItemParser<'a> {
+    pub fn new(source: Source<'a>) -> Self {
+        Self {
+            reader: SourceReader::new(source),
+        }
+    }
+}
+
+impl<'a> Iterator for ItemParser<'a> {
+    type Item = Result<Item2, ItemParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.reader.is_eof() {
+            return None;
+        }
+
+        let begin = self.reader.position();
+        self.reader.skip_whitespace();
+        let line = self.reader.peek_str();
+        if line.starts_with("-- @") {
+            self.reader.skip_n(3);
+            let attribute = match self.reader.parse::<Attribute, _>() {
+                Ok(attribute) => attribute,
+                Err(err) => return Some(Err(err)),
+            };
+            self.reader.skip_line();
+            return Some(Ok(Item2::UnmatchedAttribute(attribute)));
+        }
+
+        if !line.starts_with("---") {
+            let (_, span) = self.reader.read_line();
+            return Some(Ok(Item2::SourceLine(span.with_begin(begin))));
+        }
+        self.reader.skip_n(3);
+        self.reader.skip_whitespace();
+
+        let description = self.reader.parse::<Description, _>().unwrap();
+        self.reader.skip_line();
+
+        let mut attributes = Vec::with_capacity(8);
+        loop {
+            let mut lookahead = self.reader.clone();
+            lookahead.skip_whitespace();
+            let line = lookahead.peek_str();
+            if line.starts_with("-- @") {
+                lookahead.skip_n(3);
+                let attribute = match lookahead.parse::<Attribute, _>() {
+                    Ok(attribute) => attribute,
+                    Err(err) => {
+                        self.reader.skip_line();
+                        return Some(Err(err));
+                    }
+                };
+                attributes.push(attribute);
+                lookahead.skip_line();
+                self.reader.advance(lookahead.position());
+            } else {
+                break;
+            }
+        }
+
+        let span = Span::new(begin, self.reader.position());
+        let (_, source_span) = self.reader.read_line();
+
+        Some(Ok(Item2::Section(Section {
+            span,
+            header: description,
+            attributes,
+            source_line: source_span,
+        })))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::assert_matches::assert_matches;
+
     use crate::{
-        item::Class,
+        item::{Class, Item2, ItemParser, Path},
         source::{Source, SourceReader, Spanned},
     };
 
@@ -656,6 +997,29 @@ mod tests {
         ident_parse_invalid_helper(" foo bar");
     }
 
+    fn path_parse_valid_helper(s: &str, tbl: Option<&str>, name: &str) {
+        let source = Source::new(s);
+        let mut stream = SourceReader::new(source);
+        let path = stream.parse::<Path, _>().unwrap();
+        assert_eq!(path.table().map(|t| source.lookup(&t)), tbl);
+        assert_eq!(source.lookup(&path.name()), name);
+    }
+
+    #[test]
+    fn path_parse_valid() {
+        path_parse_valid_helper(
+            "builtins_library.select
+",
+            Some("builtins_library"),
+            "select",
+        );
+
+        path_parse_valid_helper(
+            "select
+", None, "select",
+        );
+    }
+
     fn class_parse_valid_helper(s: &str, kind: ClassKind) {
         let source = Source::new(s);
         let mut stream = SourceReader::new(source);
@@ -702,5 +1066,90 @@ mod tests {
     #[should_panic]
     fn class_parse_invalid_space_word() {
         class_parse_invalid_helper(" foo bar");
+    }
+
+    #[test]
+    fn item_parser_valid() {
+        const EXAMPLE_CODE: &str = r#"end
+
+--- Sets a rendertarget texture to the specified texture key
+-- @param string key The key name to set. $basetexture is the key name for most purposes.
+-- @param string name The name of the rendertarget
+function material_methods:setTextureRenderTarget(key, name)
+	checkkey(key)
+	checkluatype(name, TYPE_STRING)
+
+	local rt = instance.data.render.rendertargets[name]
+	if not rt then SF.Throw("Invalid rendertarget: "..name, 2) end
+
+	local m = unwrap(self)
+	m:SetTexture(key, rt)
+end
+
+--- Sets a keyvalue to be undefined
+-- @param string key The key name to set
+function material_methods:setUndefined(key)
+	checkkey(key)
+	unwrap(self):SetUndefined(key)
+end
+
+--- Sets a vector keyvalue
+-- @param string key The key name to set
+-- @param Vector v The value to set it to
+function material_methods:setVector(key, v)
+	checkkey(key)
+	unwrap(self):SetVector(key, vunwrap(v))
+end
+"#;
+
+        let source = Source::new(EXAMPLE_CODE);
+
+        let mut iter = ItemParser::new(source);
+        for _ in 0..2 {
+            assert_matches!(iter.next(), Some(Ok(Item2::SourceLine(_))));
+        }
+
+        let section = match iter.next().unwrap() {
+            Ok(Item2::Section(section)) => section,
+            v @ _ => panic!(
+                "Expected section, found: {:?}\n{}",
+                v,
+                iter.reader.peek_str()
+            ),
+        };
+
+        assert_eq!(
+            source.lookup(section.header()),
+            "Sets a rendertarget texture to the specified texture key"
+        );
+
+        assert_eq!(section.attributes().len(), 2);
+
+        let attr0 = match &section.attributes()[0] {
+            crate::item::Attribute::Parameter(param) => param.value(),
+            v @ _ => panic!("Expected parameter, found: {:?}", v,),
+        };
+        assert_eq!(source.lookup(attr0.type_union()), "string");
+        assert_eq!(source.lookup(&attr0.name()), "key");
+        assert_eq!(
+            source.lookup(attr0.description()),
+            "The key name to set. $basetexture is the key name for most purposes."
+        );
+
+        let attr1 = match &section.attributes()[1] {
+            crate::item::Attribute::Parameter(param) => param.value(),
+            v @ _ => panic!("Expected parameter, found: {:?}", v,),
+        };
+        assert_eq!(source.lookup(attr1.type_union()), "string");
+        assert_eq!(source.lookup(&attr1.name()), "name");
+        assert_eq!(
+            source.lookup(attr1.description()),
+            "The name of the rendertarget"
+        );
+
+        assert_eq!(
+            source.lookup(&section.source_line()),
+            "function material_methods:setTextureRenderTarget(key, name)"
+        );
     }
 }

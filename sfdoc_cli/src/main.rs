@@ -60,25 +60,27 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn command_parse(parse: ParseArgs) -> anyhow::Result<()> {
-    let (docs, _diags) = sfdoc::document_paths(&parse.paths).unwrap();
-    //let docs = Docs {
-    //    libraries: HashMap::from_iter(std::iter::once((
-    //        "math".into(),
-    //        Library {
-    //            name: "math".into(),
-    //            description: "A library of math functions".into(),
-    //            realm: sfdoc::Realm::Shared,
-    //            tables: Default::default(),
-    //            methods: Default::default(),
-    //            fields: Default::default(),
-    //        },
-    //    ))),
-    //    ..Default::default()
-    //};
-
+    let (docs, diags) = sfdoc::document_paths(&parse.paths).unwrap();
     let mut stdout = std::io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &docs)?;
-
+    for diag in diags {
+        match diag.level() {
+            sfdoc::DiagnosticLevel::Warning => log::warn!(
+                "In {} at {}:{}\nMessage: '{}'",
+                diag.path().display(),
+                diag.location().line(),
+                diag.location().column(),
+                diag.message()
+            ),
+            sfdoc::DiagnosticLevel::Error => log::error!(
+                "In {} at {}:{}\nMessage: '{}'",
+                diag.path().display(),
+                diag.location().line(),
+                diag.location().column(),
+                diag.message()
+            ),
+        }
+    }
     Ok(())
 }
 
