@@ -1,6 +1,6 @@
 use std::io::{Result, Write};
 
-use sfdoc::{Library, Method, Parameter, Realm, Return, Type};
+use sfdoc::{Library, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LibraryKind {
@@ -15,7 +15,246 @@ enum MethodKind<'s> {
     Standalone,
 }
 
-enum Operation {
+struct MetaHeader;
+
+impl std::fmt::Display for MetaHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "---@meta")
+    }
+}
+
+enum DescriptionKind {
+    Inline,
+    Newline,
+    Return,
+}
+
+struct Description<'s> {
+    kind: DescriptionKind,
+    description: &'s str,
+}
+
+impl<'s> Description<'s> {
+    fn new(kind: DescriptionKind, description: &'s str) -> Self {
+        Self { kind, description }
+    }
+}
+
+impl<'s> std::fmt::Display for Description<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let desc = self.description.trim();
+        if desc.is_empty() {
+            return Ok(());
+        }
+
+        let mut newline = false;
+        match self.kind {
+            DescriptionKind::Inline => write!(f, " ")?,
+            DescriptionKind::Newline => write!(f, "--- ")?,
+            DescriptionKind::Return => write!(f, " # ")?,
+        }
+        for line in desc.lines() {
+            if newline {
+                write!(f, "\n--- ")?;
+            }
+            newline = true;
+            write!(f, "{}", line)?;
+        }
+        Ok(())
+    }
+}
+
+struct Realm(sfdoc::Realm);
+
+impl Realm {
+    fn new(realm: sfdoc::Realm) -> Self {
+        Self(realm)
+    }
+}
+
+impl std::fmt::Display for Realm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "--- Realm: ")?;
+        match self.0 {
+            sfdoc::Realm::Client => write!(f, "client"),
+            sfdoc::Realm::Server => write!(f, "server"),
+            sfdoc::Realm::Shared => write!(f, "shared"),
+        }
+    }
+}
+
+struct Method<'s> {
+    kind: MethodKind<'s>,
+    method: &'s sfdoc::Method,
+}
+
+impl<'s> Method<'s> {
+    pub fn new(kind: MethodKind<'s>, method: &'s sfdoc::Method) -> Self {
+        Self { kind, method }
+    }
+}
+
+impl<'s> std::fmt::Display for Method<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{}",
+            Description::new(DescriptionKind::Newline, self.method.description())
+        )?;
+        writeln!(f, "{}", Realm(self.method.realm()))?;
+        for param in self.method.parameters() {
+            writeln!(f, "{}", Parameter::from(param))?;
+        }
+        for ret in self.method.returns() {
+            writeln!(f, "{}", Return::from(ret))?;
+        }
+        writeln!(
+            f,
+            "{}",
+            FunctionDecl::new(
+                self.kind,
+                self.method.name(),
+                self.method.parameters().iter().map(|p| p.name())
+            )
+        )?;
+        Ok(())
+    }
+}
+
+struct Parameter<'s, T> {
+    name: &'s str,
+    optional: bool,
+    types: T,
+    description: &'s str,
+}
+
+impl<'s, T: std::fmt::Display + 's> Parameter<'s, T> {
+    fn new(name: &'s str, optional: bool, types: T, description: &'s str) -> Self {
+        Self {
+            name,
+            optional,
+            types,
+            description,
+        }
+    }
+}
+
+impl<'s> From<&'s sfdoc::Parameter> for Parameter<'s, sfdoc::Types<'s>> {
+    fn from(p: &'s sfdoc::Parameter) -> Self {
+        Self::new(p.name(), p.optional(), p.types(), p.description())
+    }
+}
+
+impl<'s, T: std::fmt::Display + 's> std::fmt::Display for Parameter<'s, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "---@param {}", ParameterName::new(self.name))?;
+        if self.optional {
+            write!(f, "?")?;
+        }
+        write!(f, " {}", self.types)?;
+        write!(
+            f,
+            "{}",
+            Description::new(DescriptionKind::Inline, self.description)
+        )?;
+        Ok(())
+    }
+}
+
+struct ParameterName<'s>(&'s str);
+
+impl<'s> ParameterName<'s> {
+    fn new(name: &'s str) -> Self {
+        Self(name)
+    }
+}
+
+impl<'s> std::fmt::Display for ParameterName<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        if is_reserved_keyword(self.0) {
+            write!(f, "_")?;
+        }
+        Ok(())
+    }
+}
+
+struct Return<'s, T: std::fmt::Display + 's> {
+    types: T,
+    description: &'s str,
+}
+
+impl<'s, T: std::fmt::Display + 's> Return<'s, T> {
+    fn new(types: T, description: &'s str) -> Self {
+        Self { types, description }
+    }
+}
+
+impl<'s> From<&'s sfdoc::Return> for Return<'s, sfdoc::Types<'s>> {
+    fn from(r: &'s sfdoc::Return) -> Self {
+        Self::new(r.types(), r.description())
+    }
+}
+
+impl<'s, T: std::fmt::Display + 's> std::fmt::Display for Return<'s, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "---@return {}", self.types)?;
+        write!(
+            f,
+            "{}",
+            Description::new(DescriptionKind::Return, self.description)
+        )?;
+        Ok(())
+    }
+}
+
+struct FunctionDecl<'s, I> {
+    kind: MethodKind<'s>,
+    name: &'s str,
+    params: I,
+}
+
+impl<'s, I: Iterator<Item = &'s str> + Clone> FunctionDecl<'s, I> {
+    fn new(kind: MethodKind<'s>, name: &'s str, params: I) -> Self {
+        Self { kind, name, params }
+    }
+}
+
+impl<'s, I: Iterator<Item = &'s str> + Clone> std::fmt::Display for FunctionDecl<'s, I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "function ")?;
+        match self.kind {
+            MethodKind::Table(n) => write!(f, "{}.{}", n, self.name)?,
+            MethodKind::Type(n) => write!(f, "{}:{}", n, self.name)?,
+            MethodKind::Standalone => write!(f, "{}", self.name)?,
+        }
+        write!(f, "(")?;
+        for (i, param) in self.params.clone().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", ParameterName::new(param))?;
+        }
+        write!(f, ") end")?;
+        Ok(())
+    }
+}
+
+struct Class<'s>(&'s str);
+
+impl<'s> Class<'s> {
+    fn new(class: &'s str) -> Self {
+        Self(class)
+    }
+}
+
+impl<'s> std::fmt::Display for Class<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "---@class {}", self.0)
+    }
+}
+
+enum OperationKind {
     UnaryMinus,
     Add,
     Subtract,
@@ -23,151 +262,81 @@ enum Operation {
     Divide,
 }
 
-impl std::fmt::Display for Operation {
+impl std::fmt::Display for OperationKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Operation::UnaryMinus => write!(f, "unm"),
-            Operation::Add => write!(f, "add"),
-            Operation::Subtract => write!(f, "sub"),
-            Operation::Multiply => write!(f, "mul"),
-            Operation::Divide => write!(f, "div"),
+            OperationKind::UnaryMinus => write!(f, "unm"),
+            OperationKind::Add => write!(f, "add"),
+            OperationKind::Subtract => write!(f, "sub"),
+            OperationKind::Multiply => write!(f, "mul"),
+            OperationKind::Divide => write!(f, "div"),
         }
     }
 }
 
-enum Annotation<'s> {
-    Meta,
-    Class {
-        name: &'s str,
-    },
-    Deprecated,
-    Field {
-        name: &'s str,
-        ty: &'s str,
-        description: Option<&'s str>,
-    },
-    Operator {
-        operation: Operation,
-        input_type: Option<&'s str>,
-        output_type: &'s str,
-    },
-    Param {
-        name: &'s str,
-        optional: bool,
-        ty: &'s str,
-        description: Option<&'s str>,
-    },
-    Return {
-        ty: &'s str,
-        name: Option<&'s str>,
-        description: Option<&'s str>,
-    },
+struct Operation<'s> {
+    kind: OperationKind,
+    input: Option<&'s str>,
+    output: &'s str,
 }
 
-impl<'s> Annotation<'s> {
-    fn format_description_opt(
-        f: &mut std::fmt::Formatter,
-        description: Option<&'s str>,
-    ) -> std::fmt::Result {
-        let mut newline = false;
-        if let Some(description) = description {
-            for line in description.lines() {
-                if newline {
-                    write!(f, "\n--- ")?;
-                } else {
-                    write!(f, " ")?;
-                }
-                newline = true;
-                write!(f, "{}", line.trim())?;
-            }
+impl<'s> Operation<'s> {
+    fn new(kind: OperationKind, input: Option<&'s str>, output: &'s str) -> Self {
+        Self {
+            kind,
+            input,
+            output,
         }
+    }
+}
+
+impl<'s> std::fmt::Display for Operation<'s> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "---@operator {}", self.kind)?;
+        if let Some(input) = self.input {
+            write!(f, "({})", input)?;
+        }
+        write!(f, ":{}", self.output)?;
         Ok(())
     }
 }
 
-impl<'s> std::fmt::Display for Annotation<'s> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Annotation::Meta => write!(f, "---@meta"),
-            Annotation::Class { name } => write!(f, "---@class {}", name),
-            Annotation::Deprecated => write!(f, "---@deprecated"),
-            Annotation::Field {
-                name,
-                ty,
-                description,
-            } => {
-                write!(f, "---@field {} {}", name, ty)?;
-                Self::format_description_opt(f, *description)?;
-                Ok(())
-            }
-            Annotation::Operator {
-                operation,
-                input_type,
-                output_type,
-            } => {
-                write!(f, "---@operator {}", operation)?;
-                if let Some(input_type) = input_type {
-                    write!(f, "({})", input_type)?;
-                }
-                write!(f, ":{}", output_type)
-            }
-            Annotation::Param {
-                name,
-                optional,
-                ty,
-                description,
-            } => {
-                write!(f, "---@param {}", name)?;
-                if *optional {
-                    write!(f, "?")?;
-                }
-                write!(f, " {}", ty)?;
-                Self::format_description_opt(f, *description)?;
-                Ok(())
-            }
-            Annotation::Return {
-                ty,
-                name,
-                description,
-            } => {
-                write!(f, "---@return {}", ty)?;
-                if let Some(name) = name {
-                    write!(f, " {}", name)?;
-                }
-                if description.is_some() {
-                    write!(f, " #")?;
-                    Self::format_description_opt(f, *description)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
 pub fn generate_lib(writer: &mut impl Write, library: &Library, kind: LibraryKind) -> Result<()> {
-    writeln!(writer, "{}", Annotation::Meta)?;
+    writeln!(writer, "{}", MetaHeader)?;
     let method_kind = match kind {
         LibraryKind::Normal => {
-            write_description(writer, library.description())?;
-            write_realm(writer, library.realm())?;
+            writeln!(
+                writer,
+                "{}",
+                Description::new(DescriptionKind::Newline, library.description())
+            )?;
+            writeln!(writer, "{}", Realm::new(library.realm()))?;
             writeln!(writer, "{} = {{}}", library.name())?;
+            writeln!(writer)?;
             MethodKind::Table(library.name())
         }
         LibraryKind::Prelude => MethodKind::Standalone,
     };
 
     for method in library.methods() {
-        write_method(writer, method_kind, method)?;
+        writeln!(writer, "{}", Method::new(method_kind, method))?;
+        writeln!(writer)?;
     }
 
     Ok(())
 }
 
 pub fn generate_ty(writer: &mut impl Write, ty: &Type) -> Result<()> {
-    writeln!(writer, "{}", Annotation::Meta)?;
-    write_description(writer, ty.description())?;
-    write_realm(writer, ty.realm())?;
-    writeln!(writer, "{}", Annotation::Class { name: ty.name() })?;
+    writeln!(writer, "{}", MetaHeader)?;
+    writeln!(
+        writer,
+        "{}",
+        Description::new(DescriptionKind::Newline, ty.description())
+    )?;
+    writeln!(writer, "{}", Realm::new(ty.realm()))?;
+    writeln!(writer, "{}", Class::new(ty.name()))?;
+    writeln!(writer)?;
+
     for method in ty.meta_methods() {
         let input_type = method.parameters().get(0).map(|p| p.types().to_string());
         let output_type = method.returns().get(0).map(|p| p.types().to_string());
@@ -181,112 +350,53 @@ pub fn generate_ty(writer: &mut impl Write, ty: &Type) -> Result<()> {
             }
         };
 
-        let operator = match method.name() {
-            "__add" => Annotation::Operator {
-                operation: Operation::Add,
-                input_type,
-                output_type,
-            },
-            "__div" => Annotation::Operator {
-                operation: Operation::Divide,
-                input_type,
-                output_type,
-            },
-            "__mul" => Annotation::Operator {
-                operation: Operation::Multiply,
-                input_type,
-                output_type,
-            },
-            "__unm" => Annotation::Operator {
-                operation: Operation::UnaryMinus,
-                input_type: None,
-                output_type,
-            },
-            "__sub" => Annotation::Operator {
-                operation: Operation::Subtract,
-                input_type,
-                output_type,
-            },
+        let operation = match method.name() {
+            "__add" => Operation::new(OperationKind::Add, input_type, output_type),
+            "__div" => Operation::new(OperationKind::Divide, input_type, output_type),
+            "__mul" => Operation::new(OperationKind::Multiply, input_type, output_type),
+            "__unm" => Operation::new(OperationKind::UnaryMinus, None, output_type),
+            "__sub" => Operation::new(OperationKind::Subtract, input_type, output_type),
             _ => continue,
         };
-        writeln!(writer, "{}", operator)?;
+        writeln!(writer, "{}", operation)?;
     }
     writeln!(writer, "{} = {{}}", ty.name())?;
     writeln!(writer)?;
 
     for method in ty.methods() {
-        write_method(writer, MethodKind::Type(ty.name()), method)?;
+        let method_kind = MethodKind::Type(ty.name());
+        writeln!(writer, "{}", Method::new(method_kind, method))?;
+        writeln!(writer)?;
     }
 
     Ok(())
 }
 
-fn write_method(writer: &mut impl Write, kind: MethodKind, method: &Method) -> Result<()> {
-    write_description(writer, method.description())?;
-    write_realm(writer, method.realm())?;
-    for param in method.parameters() {
-        write_parameter(writer, param)?;
-    }
-    for ret in method.returns() {
-        write_return(writer, ret)?;
-    }
-    write!(writer, "function ")?;
-    match kind {
-        MethodKind::Table(n) => write!(writer, "{}.{}", n, method.name())?,
-        MethodKind::Type(n) => write!(writer, "{}:{}", n, method.name())?,
-        MethodKind::Standalone => write!(writer, "{}", method.name())?,
-    }
-    write!(writer, "(")?;
-    for (i, param) in method.parameters().iter().enumerate() {
-        if i > 0 {
-            write!(writer, ", ")?;
-        }
-        write!(writer, "{}", param.name())?;
-    }
-    writeln!(writer, ") end")?;
-    writeln!(writer)?;
-    Ok(())
-}
-
-fn write_parameter(writer: &mut impl Write, param: &Parameter) -> Result<()> {
-    writeln!(
-        writer,
-        "{}",
-        Annotation::Param {
-            name: param.name(),
-            optional: param.optional(),
-            ty: &param.types().to_string(),
-            description: Some(param.description())
-        }
+fn is_reserved_keyword(v: &str) -> bool {
+    std::matches!(
+        v,
+        "and"
+            | "break"
+            | "do"
+            | "else"
+            | "elseif"
+            | "end"
+            | "false"
+            | "for"
+            | "function"
+            | "if"
+            | "in"
+            | "local"
+            | "nil"
+            | "not"
+            | "or"
+            | "repeat"
+            | "return"
+            | "then"
+            | "true"
+            | "until"
+            | "while"
     )
-}
-
-fn write_return(writer: &mut impl Write, ret: &Return) -> Result<()> {
-    writeln!(
-        writer,
-        "{}",
-        Annotation::Return {
-            ty: &ret.types().to_string(),
-            name: None,
-            description: Some(ret.description()),
-        }
-    )
-}
-
-fn write_description(writer: &mut impl Write, description: &str) -> Result<()> {
-    for line in description.lines() {
-        writeln!(writer, "--- {}", line)?;
-        writeln!(writer, "---")?;
-    }
-    Ok(())
-}
-
-fn write_realm(writer: &mut impl Write, realm: Realm) -> Result<()> {
-    match realm {
-        Realm::Client => writeln!(writer, "--- Realm => client\n---"),
-        Realm::Server => writeln!(writer, "--- Realm => server\n---"),
-        Realm::Shared => writeln!(writer, "--- Realm => shared\n---"),
-    }
 }
 
 #[cfg(test)]
@@ -294,181 +404,146 @@ mod tests {
     use super::*;
 
     #[test]
-    fn annotation_meta() {
-        assert_eq!(Annotation::Meta.to_string(), "---@meta");
+    fn display_metaheader() {
+        assert_eq!(MetaHeader.to_string(), "---@meta");
     }
 
     #[test]
-    fn annotation_class() {
+    fn display_description() {
         assert_eq!(
-            Annotation::Class { name: "Foo" }.to_string(),
-            "---@class Foo"
+            Description::new(DescriptionKind::Newline, "foo").to_string(),
+            "--- foo"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Newline, "foo\nbar").to_string(),
+            "--- foo\n--- bar"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Newline, "foo\nbar\nbaz").to_string(),
+            "--- foo\n--- bar\n--- baz"
+        );
+
+        assert_eq!(
+            Description::new(DescriptionKind::Inline, "foo").to_string(),
+            " foo"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Inline, "foo\nbar").to_string(),
+            " foo\n--- bar"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Inline, "foo\nbar\nbaz").to_string(),
+            " foo\n--- bar\n--- baz"
+        );
+
+        assert_eq!(
+            Description::new(DescriptionKind::Return, "foo").to_string(),
+            " # foo"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Return, "foo\nbar").to_string(),
+            " # foo\n--- bar"
+        );
+        assert_eq!(
+            Description::new(DescriptionKind::Return, "foo\nbar\nbaz").to_string(),
+            " # foo\n--- bar\n--- baz"
         );
     }
 
     #[test]
-    fn annotation_field() {
+    fn display_realm() {
         assert_eq!(
-            Annotation::Field {
-                name: "foo",
-                ty: "number",
-                description: Some("foo"),
-            }
-            .to_string(),
-            "---@field foo number foo"
+            Realm::new(sfdoc::Realm::Server).to_string(),
+            "--- Realm: server"
+        );
+        assert_eq!(
+            Realm::new(sfdoc::Realm::Client).to_string(),
+            "--- Realm: client"
+        );
+        assert_eq!(
+            Realm::new(sfdoc::Realm::Shared).to_string(),
+            "--- Realm: shared"
+        );
+    }
+
+    #[test]
+    fn display_param() {
+        assert_eq!(
+            Parameter::new("foo", false, &"number", "foo",).to_string(),
+            "---@param foo number foo"
         );
 
         assert_eq!(
-            Annotation::Field {
-                name: "foo",
-                ty: "number",
-                description: None,
-            }
-            .to_string(),
-            "---@field foo number"
+            Parameter::new("foo", true, &"number", "").to_string(),
+            "---@param foo? number"
         );
 
         assert_eq!(
-            Annotation::Field {
-                name: "foo",
-                ty: "number",
-                description: Some(""),
-            }
-            .to_string(),
-            "---@field foo number"
+            Parameter::new("foo", true, &"number", "",).to_string(),
+            "---@param foo? number"
         );
 
         assert_eq!(
-            Annotation::Field {
-                name: "foo",
-                ty: "number",
-                description: Some("foo\nbar"),
-            }
-            .to_string(),
-            "---@field foo number foo\n--- bar"
+            Parameter::new("foo", true, &"number", "foo\nbar",).to_string(),
+            "---@param foo? number foo\n--- bar"
         );
+
+        assert_eq!(
+            Parameter::new("end", true, &"number", "foo\nbar",).to_string(),
+            "---@param end_? number foo\n--- bar"
+        );
+    }
+
+    #[test]
+    fn display_return() {
+        assert_eq!(
+            Return::new("number", "foo").to_string(),
+            "---@return number # foo"
+        );
+
+        assert_eq!(Return::new("number", "",).to_string(), "---@return number");
+
+        assert_eq!(Return::new("number", "",).to_string(), "---@return number");
+
+        assert_eq!(
+            Return::new("number", "foo\nbar",).to_string(),
+            "---@return number # foo\n--- bar"
+        );
+
+        assert_eq!(
+            Return::new("number", "foo",).to_string(),
+            "---@return number # foo"
+        );
+    }
+
+    #[test]
+    fn display_functiondecl() {
+        assert_eq!(
+            FunctionDecl::new(MethodKind::Standalone, "foo", ["p1", "p2"].into_iter()).to_string(),
+            "function foo(p1, p2) end"
+        );
+
+        assert_eq!(
+            FunctionDecl::new(MethodKind::Standalone, "foo", ["end", "p2"].into_iter()).to_string(),
+            "function foo(end_, p2) end"
+        );
+    }
+
+    #[test]
+    fn display_class() {
+        assert_eq!(Class::new("Foo").to_string(), "---@class Foo");
     }
 
     #[test]
     fn annotation_operator() {
         assert_eq!(
-            Annotation::Operator {
-                operation: Operation::Add,
-                input_type: Some("number"),
-                output_type: "number",
-            }
-            .to_string(),
+            Operation::new(OperationKind::Add, Some("number"), "number",).to_string(),
             "---@operator add(number):number"
         );
 
         assert_eq!(
-            Annotation::Operator {
-                operation: Operation::Add,
-                input_type: None,
-                output_type: "number",
-            }
-            .to_string(),
+            Operation::new(OperationKind::Add, None, "number").to_string(),
             "---@operator add:number"
-        );
-    }
-
-    #[test]
-    fn annotation_param() {
-        assert_eq!(
-            Annotation::Param {
-                name: "foo",
-                optional: false,
-                ty: "number",
-                description: Some("foo"),
-            }
-            .to_string(),
-            "---@param foo number foo"
-        );
-
-        assert_eq!(
-            Annotation::Param {
-                name: "foo",
-                optional: true,
-                ty: "number",
-                description: None,
-            }
-            .to_string(),
-            "---@param foo? number"
-        );
-
-        assert_eq!(
-            Annotation::Param {
-                name: "foo",
-                optional: true,
-                ty: "number",
-                description: Some(""),
-            }
-            .to_string(),
-            "---@param foo? number"
-        );
-
-        assert_eq!(
-            Annotation::Param {
-                name: "foo",
-                optional: true,
-                ty: "number",
-                description: Some("foo\nbar"),
-            }
-            .to_string(),
-            "---@param foo? number foo\n--- bar"
-        );
-    }
-
-    #[test]
-    fn annotation_return() {
-        assert_eq!(
-            Annotation::Return {
-                ty: "number",
-                name: None,
-                description: Some("foo"),
-            }
-            .to_string(),
-            "---@return number # foo"
-        );
-
-        assert_eq!(
-            Annotation::Return {
-                ty: "number",
-                name: None,
-                description: None,
-            }
-            .to_string(),
-            "---@return number"
-        );
-
-        assert_eq!(
-            Annotation::Return {
-                ty: "number",
-                name: None,
-                description: Some(""),
-            }
-            .to_string(),
-            "---@return number #"
-        );
-
-        assert_eq!(
-            Annotation::Return {
-                ty: "number",
-                name: None,
-                description: Some("foo\nbar"),
-            }
-            .to_string(),
-            "---@return number # foo\n--- bar"
-        );
-
-        assert_eq!(
-            Annotation::Return {
-                ty: "number",
-                name: Some("foo"),
-                description: Some("foo"),
-            }
-            .to_string(),
-            "---@return number foo # foo"
         );
     }
 }
