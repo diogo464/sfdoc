@@ -36,10 +36,10 @@ impl Snippets {
                 arg.types()
             ));
         }
-        main_line.push_str(")");
+        main_line.push(')');
 
         body.push(main_line);
-        body.push(format!("\t$1"));
+        body.push("\t$1".into());
         body.push("end)".into());
 
         self.0.insert(

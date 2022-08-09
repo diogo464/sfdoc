@@ -15,16 +15,15 @@ enum MethodKind<'s> {
     Standalone,
 }
 
-enum Operation<'s> {
+enum Operation {
     UnaryMinus,
     Add,
     Subtract,
     Multiply,
     Divide,
-    Other(&'s str),
 }
 
-impl<'s> std::fmt::Display for Operation<'s> {
+impl std::fmt::Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Operation::UnaryMinus => write!(f, "unm"),
@@ -32,7 +31,6 @@ impl<'s> std::fmt::Display for Operation<'s> {
             Operation::Subtract => write!(f, "sub"),
             Operation::Multiply => write!(f, "mul"),
             Operation::Divide => write!(f, "div"),
-            Operation::Other(s) => write!(f, "{}", s),
         }
     }
 }
@@ -49,7 +47,7 @@ enum Annotation<'s> {
         description: Option<&'s str>,
     },
     Operator {
-        operation: Operation<'s>,
+        operation: Operation,
         input_type: Option<&'s str>,
         output_type: &'s str,
     },
@@ -134,10 +132,10 @@ pub fn generate_lib(writer: &mut impl Write, library: &Library, kind: LibraryKin
     writeln!(writer, "{}", Annotation::Meta)?;
     let method_kind = match kind {
         LibraryKind::Normal => {
-            write_description(writer, &library.description())?;
+            write_description(writer, library.description())?;
             write_realm(writer, library.realm())?;
             writeln!(writer, "{} = {{}}", library.name())?;
-            MethodKind::Table(&library.name())
+            MethodKind::Table(library.name())
         }
         LibraryKind::Prelude => MethodKind::Standalone,
     };
@@ -201,7 +199,7 @@ pub fn generate_ty(writer: &mut impl Write, ty: &Type) -> Result<()> {
     writeln!(writer)?;
 
     for method in ty.methods() {
-        write_method(writer, MethodKind::Type(&ty.name()), method)?;
+        write_method(writer, MethodKind::Type(ty.name()), method)?;
     }
 
     Ok(())
@@ -239,10 +237,10 @@ fn write_parameter(writer: &mut impl Write, param: &Parameter) -> Result<()> {
         writer,
         "{}",
         Annotation::Param {
-            name: &param.name(),
+            name: param.name(),
             optional: param.optional(),
             ty: &param.types().to_string(),
-            description: Some(&param.description())
+            description: Some(param.description())
         }
     )
 }
@@ -254,7 +252,7 @@ fn write_return(writer: &mut impl Write, ret: &Return) -> Result<()> {
         Annotation::Return {
             ty: &ret.types().to_string(),
             name: None,
-            description: Some(&ret.description()),
+            description: Some(ret.description()),
         }
     )
 }

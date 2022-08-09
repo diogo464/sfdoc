@@ -165,7 +165,7 @@ impl<'s> SourceReader<'s> {
     }
 
     pub fn source(&self) -> Source<'s> {
-        self.source.clone()
+        self.source
     }
 
     /// Peek the remaining source as a string.

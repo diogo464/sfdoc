@@ -3,10 +3,10 @@ use std::{collections::HashMap, path::Path};
 use crate::{
     item,
     section::{
-        self, FieldSection, HookSection, LibrarySection, MethodSection, Section, SectionBuilder,
-        SectionDiagnostic, SectionStatus, TableSection, TypeSection,
+        self, FieldSection, HookSection, LibrarySection, MethodSection, Section, TableSection,
+        TypeSection,
     },
-    source::{Location, Source, SourceIndexer, SourceReader},
+    source::{Source, SourceIndexer},
     Diagnostic, DiagnosticLevel, Docs, Field, Hook, Library, LuaFile, Method, Table, Type,
 };
 
@@ -328,17 +328,12 @@ impl<'s> DocBuilder<'s> {
     fn diagnostic_check_unknown_types(&mut self) {
         for (tbl, methods) in self.tbl_methods.iter() {
             for method in methods.values() {
-                let parameter_types = method
+                let param_types = method
                     .parameters()
                     .iter()
-                    .map(|p| p.types().into_iter())
-                    .flatten();
-                let return_types = method
-                    .returns()
-                    .iter()
-                    .map(|p| p.types().into_iter())
-                    .flatten();
-                let types = parameter_types.chain(return_types);
+                    .flat_map(|p| p.types().into_iter());
+                let return_types = method.returns().iter().flat_map(|p| p.types().into_iter());
+                let types = param_types.chain(return_types);
                 for ty in types {
                     if !is_well_known_type(ty) && !self.types.contains_key(ty) {
                         log::warn!("Unknown type in {}.{}: {}", tbl, method.name(), ty);
@@ -373,9 +368,17 @@ impl<'s> DocBuilder<'s> {
 }
 
 fn is_well_known_type(ty: &str) -> bool {
-    match ty {
-        "table" | "boolean" | "string" | "integer" | "number" | "any" | "function" | "..."
-        | "nil" | "thread" => true,
-        _ => false,
-    }
+    std::matches!(
+        ty,
+        "table"
+            | "boolean"
+            | "string"
+            | "integer"
+            | "number"
+            | "any"
+            | "function"
+            | "..."
+            | "nil"
+            | "thread"
+    )
 }

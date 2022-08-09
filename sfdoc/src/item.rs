@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::source::{Parse, Source, SourceReader, SourceStream, Span, Spanned};
 
 const PREFIX_COMMENT: &str = "--";
@@ -233,7 +234,7 @@ impl Key {
     /// Returns the key identifier.
     /// This does not contain the `@` symbol.
     pub fn ident(&self) -> Ident {
-        self.ident.clone()
+        self.ident
     }
 
     /// Returns the span of the key.
@@ -323,7 +324,7 @@ impl Class {
     }
 
     pub fn ident(&self) -> Ident {
-        self.ident.clone()
+        self.ident
     }
 }
 
