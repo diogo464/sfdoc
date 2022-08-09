@@ -64,6 +64,27 @@ enum Annotation<'s> {
     },
 }
 
+impl<'s> Annotation<'s> {
+    fn format_description_opt(
+        f: &mut std::fmt::Formatter,
+        description: Option<&'s str>,
+    ) -> std::fmt::Result {
+        let mut newline = false;
+        if let Some(description) = description {
+            for line in description.lines() {
+                if newline {
+                    write!(f, "\n--- ")?;
+                } else {
+                    write!(f, " ")?;
+                }
+                newline = true;
+                write!(f, "{}", line.trim())?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<'s> std::fmt::Display for Annotation<'s> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -76,9 +97,7 @@ impl<'s> std::fmt::Display for Annotation<'s> {
                 description,
             } => {
                 write!(f, "---@field {} {}", name, ty)?;
-                if let Some(description) = description {
-                    write!(f, " {}", description)?;
-                }
+                Self::format_description_opt(f, *description)?;
                 Ok(())
             }
             Annotation::Operator {
@@ -103,9 +122,7 @@ impl<'s> std::fmt::Display for Annotation<'s> {
                     write!(f, "?")?;
                 }
                 write!(f, " {}", ty)?;
-                if let Some(description) = description {
-                    write!(f, " {}", description)?;
-                }
+                Self::format_description_opt(f, *description)?;
                 Ok(())
             }
             Annotation::Return {
@@ -116,11 +133,10 @@ impl<'s> std::fmt::Display for Annotation<'s> {
                 write!(f, "---@return {}", ty)?;
                 if let Some(name) = name {
                     write!(f, " {}", name)?;
-                } else if description.is_some() {
-                    write!(f, " #")?;
                 }
-                if let Some(description) = description {
-                    write!(f, " {}", description)?;
+                if description.is_some() {
+                    write!(f, " #")?;
+                    Self::format_description_opt(f, *description)?;
                 }
                 Ok(())
             }
