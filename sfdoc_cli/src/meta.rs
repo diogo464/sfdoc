@@ -288,3 +288,187 @@ fn write_realm(writer: &mut impl Write, realm: Realm) -> Result<()> {
         Realm::Shared => writeln!(writer, "--- Realm => shared\n---"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotation_meta() {
+        assert_eq!(Annotation::Meta.to_string(), "---@meta");
+    }
+
+    #[test]
+    fn annotation_class() {
+        assert_eq!(
+            Annotation::Class { name: "Foo" }.to_string(),
+            "---@class Foo"
+        );
+    }
+
+    #[test]
+    fn annotation_field() {
+        assert_eq!(
+            Annotation::Field {
+                name: "foo",
+                ty: "number",
+                description: Some("foo"),
+            }
+            .to_string(),
+            "---@field foo number foo"
+        );
+
+        assert_eq!(
+            Annotation::Field {
+                name: "foo",
+                ty: "number",
+                description: None,
+            }
+            .to_string(),
+            "---@field foo number"
+        );
+
+        assert_eq!(
+            Annotation::Field {
+                name: "foo",
+                ty: "number",
+                description: Some(""),
+            }
+            .to_string(),
+            "---@field foo number"
+        );
+
+        assert_eq!(
+            Annotation::Field {
+                name: "foo",
+                ty: "number",
+                description: Some("foo\nbar"),
+            }
+            .to_string(),
+            "---@field foo number foo\n--- bar"
+        );
+    }
+
+    #[test]
+    fn annotation_operator() {
+        assert_eq!(
+            Annotation::Operator {
+                operation: Operation::Add,
+                input_type: Some("number"),
+                output_type: "number",
+            }
+            .to_string(),
+            "---@operator add(number):number"
+        );
+
+        assert_eq!(
+            Annotation::Operator {
+                operation: Operation::Add,
+                input_type: None,
+                output_type: "number",
+            }
+            .to_string(),
+            "---@operator add:number"
+        );
+    }
+
+    #[test]
+    fn annotation_param() {
+        assert_eq!(
+            Annotation::Param {
+                name: "foo",
+                optional: false,
+                ty: "number",
+                description: Some("foo"),
+            }
+            .to_string(),
+            "---@param foo number foo"
+        );
+
+        assert_eq!(
+            Annotation::Param {
+                name: "foo",
+                optional: true,
+                ty: "number",
+                description: None,
+            }
+            .to_string(),
+            "---@param foo? number"
+        );
+
+        assert_eq!(
+            Annotation::Param {
+                name: "foo",
+                optional: true,
+                ty: "number",
+                description: Some(""),
+            }
+            .to_string(),
+            "---@param foo? number"
+        );
+
+        assert_eq!(
+            Annotation::Param {
+                name: "foo",
+                optional: true,
+                ty: "number",
+                description: Some("foo\nbar"),
+            }
+            .to_string(),
+            "---@param foo? number foo\n--- bar"
+        );
+    }
+
+    #[test]
+    fn annotation_return() {
+        assert_eq!(
+            Annotation::Return {
+                ty: "number",
+                name: None,
+                description: Some("foo"),
+            }
+            .to_string(),
+            "---@return number # foo"
+        );
+
+        assert_eq!(
+            Annotation::Return {
+                ty: "number",
+                name: None,
+                description: None,
+            }
+            .to_string(),
+            "---@return number"
+        );
+
+        assert_eq!(
+            Annotation::Return {
+                ty: "number",
+                name: None,
+                description: Some(""),
+            }
+            .to_string(),
+            "---@return number #"
+        );
+
+        assert_eq!(
+            Annotation::Return {
+                ty: "number",
+                name: None,
+                description: Some("foo\nbar"),
+            }
+            .to_string(),
+            "---@return number # foo\n--- bar"
+        );
+
+        assert_eq!(
+            Annotation::Return {
+                ty: "number",
+                name: Some("foo"),
+                description: Some("foo"),
+            }
+            .to_string(),
+            "---@return number foo # foo"
+        );
+    }
+}
