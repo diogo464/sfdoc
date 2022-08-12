@@ -8,7 +8,11 @@
 pub mod meta;
 pub mod snippet;
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs::OpenOptions,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueHint};
@@ -17,6 +21,8 @@ use sfdoc::Docs;
 use snippet::Snippets;
 
 const DEFAULT_METADATA_FILE: &str = "docs.json";
+const DEFAULT_DOCUMENTATION_DIR: &str = "docs";
+const DEFAULT_SNIPPETS_FILE: &str = "starfall.code-snippet";
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -27,8 +33,7 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     Parse(ParseArgs),
-    GenMeta(GenMetaArgs),
-    Snippets(SnippetsArgs),
+    Generate(GenerateArgs),
 }
 
 /// Parse the documentation and generate a json file with the metadata.
@@ -40,6 +45,22 @@ struct ParseArgs {
     /// Ex: <starfall dir>/lua/starfall/libs_*
     #[clap(required = true, value_hint = ValueHint::AnyPath)]
     paths: Vec<PathBuf>,
+
+    /// Output file for the generated documentation data.
+    #[clap(long,default_value = DEFAULT_METADATA_FILE)]
+    output: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+struct GenerateArgs {
+    #[clap(subcommand)]
+    subcommand: GenerateCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum GenerateCommand {
+    Meta(GenMetaArgs),
+    Snippets(SnippetsArgs),
 }
 
 /// Generate the meta files from the parsed documentation.
@@ -51,7 +72,7 @@ struct GenMetaArgs {
     docs: PathBuf,
 
     /// Directory to write the generated documentation to.
-    #[clap(long, default_value = "sfdocs", value_hint = ValueHint::AnyPath)]
+    #[clap(long, default_value = DEFAULT_DOCUMENTATION_DIR, value_hint = ValueHint::AnyPath)]
     output: PathBuf,
 }
 
@@ -63,7 +84,7 @@ struct SnippetsArgs {
     docs: PathBuf,
 
     /// Output file for the snippets.
-    #[clap(default_value = "hooks.code-snippets", value_hint = ValueHint::FilePath)]
+    #[clap(default_value = DEFAULT_SNIPPETS_FILE, value_hint = ValueHint::FilePath)]
     output: PathBuf,
 }
 
@@ -74,15 +95,33 @@ fn main() -> anyhow::Result<()> {
 
     match args.subcommand {
         Command::Parse(parse) => command_parse(parse),
-        Command::GenMeta(annotations) => command_annotations(annotations),
-        Command::Snippets(snippets) => command_snippets(snippets),
+        Command::Generate(gen) => match gen.subcommand {
+            GenerateCommand::Meta(annotations) => command_annotations(annotations),
+            GenerateCommand::Snippets(snippets) => command_snippets(snippets),
+        },
     }
 }
 
 fn command_parse(args: ParseArgs) -> anyhow::Result<()> {
     let (docs, diags) = sfdoc::document_paths(&args.paths).unwrap();
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer_pretty(&mut stdout, &docs)?;
+
+    match args.output.as_os_str().to_str() {
+        Some("-") => {
+            let mut stdout = std::io::stdout().lock();
+            serde_json::to_writer_pretty(&mut stdout, &docs)?
+        }
+        _ => {
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(args.output)
+                .context("failed to open file")?;
+            let mut writer = BufWriter::new(file);
+            serde_json::to_writer_pretty(&mut writer, &docs)?;
+        }
+    }
+
     for diag in diags {
         match diag.level() {
             sfdoc::DiagnosticLevel::Warning => log::warn!(
@@ -136,7 +175,7 @@ fn command_snippets(args: SnippetsArgs) -> anyhow::Result<()> {
     let docs = read_docs_from_path(&args.docs)?;
     let mut snippets = Snippets::default();
     for hook in docs.hooks() {
-        snippets.add(hook);
+        snippets.insert_hook(hook);
     }
     let content = serde_json::to_string_pretty(&snippets)?;
     std::fs::write(args.output, &content)?;

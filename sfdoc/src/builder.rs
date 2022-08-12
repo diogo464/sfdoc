@@ -6,8 +6,9 @@ use crate::{
         self, FieldSection, HookSection, LibrarySection, MethodSection, Section, TableSection,
         TypeSection,
     },
-    source::{Source, SourceIndexer},
-    Diagnostic, DiagnosticLevel, Docs, Field, Hook, Library, LuaFile, Method, Table, Type,
+    source::{Position, Source, SourceIndexer},
+    Diagnostic, DiagnosticLevel, DocLocation, Docs, Field, Hook, Library, LuaFile, Method, Table,
+    Type,
 };
 
 struct DocBuilderSectionDiagnosticEmitter<'a> {
@@ -31,7 +32,6 @@ impl<'a> section::SectionDiagnosticEmitter for DocBuilderSectionDiagnosticEmitte
 #[derive(Debug, Clone)]
 struct DocBuilderFile<'s> {
     path: &'s Path,
-    source: Source<'s>,
     indexer: SourceIndexer,
 }
 
@@ -52,7 +52,7 @@ pub struct DocBuilder<'s> {
 
 impl<'s> DocBuilder<'s> {
     pub fn parse_file(&mut self, file: LuaFile<'s>) {
-        if self.files.contains_key(file.path) {
+        if self.files.contains_key(file.path()) {
             log::warn!("{} already parsed", file.path.display());
             return;
         }
@@ -60,8 +60,7 @@ impl<'s> DocBuilder<'s> {
         self.files.insert(
             file.path,
             DocBuilderFile {
-                path: file.path,
-                source: Source::new(file.source),
+                path: file.path(),
                 indexer: SourceIndexer::new(file.source),
             },
         );
@@ -185,6 +184,7 @@ impl<'s> DocBuilder<'s> {
                 self.hooks.insert(
                     section.name.clone(),
                     Hook {
+                        location: self.get_doc_location(section.span.begin()),
                         name: section.name,
                         description: section.description,
                         realm: section.realm,
@@ -218,6 +218,7 @@ impl<'s> DocBuilder<'s> {
         self.types.insert(
             section.name.clone(),
             Type {
+                location: self.get_doc_location(section.span.begin()),
                 name: section.name,
                 description: section.description,
                 realm: section.realm,
@@ -228,6 +229,7 @@ impl<'s> DocBuilder<'s> {
     }
 
     fn parse_section_table(&mut self, section: TableSection) {
+        let location = self.get_doc_location(section.span.begin());
         let tables = self.tbl_tables.entry(section.tbl).or_default();
         if tables.contains_key(&section.name) {
             log::warn!("Duplicate table: {}", section.name);
@@ -236,6 +238,7 @@ impl<'s> DocBuilder<'s> {
         tables.insert(
             section.name.clone(),
             Table {
+                location,
                 name: section.name,
                 description: section.description,
                 realm: section.realm,
@@ -283,6 +286,7 @@ impl<'s> DocBuilder<'s> {
         self.libraries.insert(
             section.name.clone(),
             Library {
+                location: self.get_doc_location(section.span.begin()),
                 name: section.name,
                 description: section.description,
                 realm: section.realm,
@@ -294,6 +298,7 @@ impl<'s> DocBuilder<'s> {
     }
 
     fn parse_section_method(&mut self, section: MethodSection) {
+        let location = self.get_doc_location(section.span.begin());
         let methods = self.tbl_methods.entry(section.tbl.clone()).or_default();
         if methods.contains_key(&section.name) {
             log::warn!("Duplicate method: {}", section.name);
@@ -302,6 +307,7 @@ impl<'s> DocBuilder<'s> {
         methods.insert(
             section.name.clone(),
             Method {
+                location,
                 name: section.name,
                 description: section.description,
                 realm: section.realm,
@@ -364,6 +370,13 @@ impl<'s> DocBuilder<'s> {
 
     fn get_current_file(&self) -> &DocBuilderFile<'s> {
         &self.files[self.current_file.unwrap()]
+    }
+
+    fn get_doc_location(&self, pos: Position) -> DocLocation {
+        let curr_file = self.get_current_file();
+        let path = curr_file.path.to_owned();
+        let loc = curr_file.indexer.locate(pos);
+        DocLocation::new(path, loc.line(), loc.column())
     }
 }
 

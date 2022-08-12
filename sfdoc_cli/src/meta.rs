@@ -334,7 +334,13 @@ pub fn generate_ty(writer: &mut impl Write, ty: &Type) -> Result<()> {
         Description::new(DescriptionKind::Newline, ty.description())
     )?;
     writeln!(writer, "{}", Realm::new(ty.realm()))?;
-    writeln!(writer, "{}", Class::new(ty.name()))?;
+    write!(writer, "{}", Class::new(ty.name()))?;
+    if let Some(index) = ty.get_meta_method("__index") {
+        let in_ty = index.parameters()[0].types();
+        let out_ty = index.returns()[0].types();
+        write!(writer, ": {{ [{}]: {} }}", in_ty, out_ty)?;
+    }
+    writeln!(writer)?;
     writeln!(writer)?;
 
     for method in ty.meta_methods() {

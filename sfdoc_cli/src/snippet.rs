@@ -15,7 +15,7 @@ struct Snippet {
 }
 
 impl Snippets {
-    pub fn add(&mut self, hook: &Hook) {
+    pub fn insert_hook(&mut self, hook: &Hook) {
         let name = hook.name();
         let prefix = format!("hook{}", hook.name());
         let description = hook.description().to_owned();
@@ -43,7 +43,7 @@ impl Snippets {
         body.push("end)".into());
 
         self.0.insert(
-            hook.name().to_owned(),
+            format!("Hook {}", name),
             Snippet {
                 prefix,
                 body,

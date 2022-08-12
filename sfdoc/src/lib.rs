@@ -35,7 +35,7 @@ impl<'s> Default for LuaFile<'s> {
 }
 
 impl<'s> LuaFile<'s> {
-    pub fn new(path: &'s Path, source: &'s str) -> Self {
+    pub const fn new(path: &'s Path, source: &'s str) -> Self {
         Self { path, source }
     }
 
@@ -116,6 +116,7 @@ impl Docs {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Library {
+    location: DocLocation,
     name: String,
     description: String,
     realm: Realm,
@@ -125,6 +126,10 @@ pub struct Library {
 }
 
 impl Library {
+    pub fn location(&self) -> &DocLocation {
+        &self.location
+    }
+
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
@@ -164,6 +169,7 @@ impl Library {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hook {
+    location: DocLocation,
     name: String,
     description: String,
     realm: Realm,
@@ -172,6 +178,10 @@ pub struct Hook {
 }
 
 impl Hook {
+    pub fn location(&self) -> &DocLocation {
+        &self.location
+    }
+
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
@@ -195,6 +205,7 @@ impl Hook {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Type {
+    location: DocLocation,
     name: String,
     description: String,
     realm: Realm,
@@ -203,6 +214,9 @@ pub struct Type {
 }
 
 impl Type {
+    pub fn location(&self) -> &DocLocation {
+        &self.location
+    }
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
@@ -228,6 +242,7 @@ impl Type {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
+    location: DocLocation,
     name: String,
     description: String,
     realm: Realm,
@@ -235,6 +250,9 @@ pub struct Table {
 }
 
 impl Table {
+    pub fn location(&self) -> &DocLocation {
+        &self.location
+    }
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
@@ -269,6 +287,7 @@ impl Field {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Method {
+    location: DocLocation,
     name: String,
     description: String,
     realm: Realm,
@@ -278,6 +297,9 @@ pub struct Method {
 }
 
 impl Method {
+    pub fn location(&self) -> &DocLocation {
+        &self.location
+    }
     pub fn name(&self) -> &str {
         self.name.as_ref()
     }
