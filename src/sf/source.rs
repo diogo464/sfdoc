@@ -87,12 +87,6 @@ impl Span {
         Position(self.begin.0 + self.length)
     }
 
-    pub fn with_end(&self, end: Position) -> Self {
-        let begin = self.begin();
-        debug_assert!(begin.0 <= end.0);
-        Self::new(begin, end)
-    }
-
     pub fn join(&self, other: Span) -> Span {
         Span::new(
             Position(self.begin.0.min(other.begin.0)),

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::source::Location;
+use super::source::Location;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiagnosticLevel {

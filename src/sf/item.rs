@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::source::{Parse, Source, SourceReader, SourceStream, Span, Spanned};
+use super::source::{Parse, Source, SourceReader, SourceStream, Span, Spanned};
 
 const PREFIX_COMMENT: &str = "--";
 
@@ -948,7 +948,7 @@ impl<'a> Iterator for ItemParser<'a> {
 mod tests {
     use std::assert_matches::assert_matches;
 
-    use crate::{
+    use super::super::{
         item::{Class, Item2, ItemParser, Path},
         source::{Source, SourceReader, Spanned},
     };
@@ -1127,7 +1127,7 @@ end
         assert_eq!(section.attributes().len(), 2);
 
         let attr0 = match &section.attributes()[0] {
-            crate::item::Attribute::Parameter(param) => param.value(),
+            super::super::item::Attribute::Parameter(param) => param.value(),
             v @ _ => panic!("Expected parameter, found: {:?}", v,),
         };
         assert_eq!(source.lookup(attr0.type_union()), "string");
@@ -1138,7 +1138,7 @@ end
         );
 
         let attr1 = match &section.attributes()[1] {
-            crate::item::Attribute::Parameter(param) => param.value(),
+            super::super::item::Attribute::Parameter(param) => param.value(),
             v @ _ => panic!("Expected parameter, found: {:?}", v,),
         };
         assert_eq!(source.lookup(attr1.type_union()), "string");

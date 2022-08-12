@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::{
+use super::{
     item,
     source::{Source, Span, Spanned},
     Field, Parameter, Realm, Return,
@@ -456,7 +456,7 @@ pub fn build_section(
 
 #[cfg(test)]
 mod tests {
-    use crate::{item, section::build_section, source::Source, Realm};
+    use super::super::{item, section::build_section, source::Source, Realm};
 
     use super::SectionDiagnosticEmitter;
 

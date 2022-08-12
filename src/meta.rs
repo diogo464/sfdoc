@@ -1,6 +1,6 @@
 use std::io::{Result, Write};
 
-use sfdoc::{Library, Type};
+use crate::sf::{self, Library, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LibraryKind {
@@ -64,10 +64,10 @@ impl<'s> std::fmt::Display for Description<'s> {
     }
 }
 
-struct Realm(sfdoc::Realm);
+struct Realm(sf::Realm);
 
 impl Realm {
-    fn new(realm: sfdoc::Realm) -> Self {
+    fn new(realm: sf::Realm) -> Self {
         Self(realm)
     }
 }
@@ -76,20 +76,20 @@ impl std::fmt::Display for Realm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "--- Realm: ")?;
         match self.0 {
-            sfdoc::Realm::Client => write!(f, "client"),
-            sfdoc::Realm::Server => write!(f, "server"),
-            sfdoc::Realm::Shared => write!(f, "shared"),
+            sf::Realm::Client => write!(f, "client"),
+            sf::Realm::Server => write!(f, "server"),
+            sf::Realm::Shared => write!(f, "shared"),
         }
     }
 }
 
 struct Method<'s> {
     kind: MethodKind<'s>,
-    method: &'s sfdoc::Method,
+    method: &'s sf::Method,
 }
 
 impl<'s> Method<'s> {
-    pub fn new(kind: MethodKind<'s>, method: &'s sfdoc::Method) -> Self {
+    pub fn new(kind: MethodKind<'s>, method: &'s sf::Method) -> Self {
         Self { kind, method }
     }
 }
@@ -139,8 +139,8 @@ impl<'s, T: std::fmt::Display + 's> Parameter<'s, T> {
     }
 }
 
-impl<'s> From<&'s sfdoc::Parameter> for Parameter<'s, sfdoc::Types<'s>> {
-    fn from(p: &'s sfdoc::Parameter) -> Self {
+impl<'s> From<&'s sf::Parameter> for Parameter<'s, sf::Types<'s>> {
+    fn from(p: &'s sf::Parameter) -> Self {
         Self::new(p.name(), p.optional(), p.types(), p.description())
     }
 }
@@ -190,8 +190,8 @@ impl<'s, T: std::fmt::Display + 's> Return<'s, T> {
     }
 }
 
-impl<'s> From<&'s sfdoc::Return> for Return<'s, sfdoc::Types<'s>> {
-    fn from(r: &'s sfdoc::Return) -> Self {
+impl<'s> From<&'s sf::Return> for Return<'s, sf::Types<'s>> {
+    fn from(r: &'s sf::Return) -> Self {
         Self::new(r.types(), r.description())
     }
 }
@@ -341,7 +341,6 @@ pub fn generate_ty(writer: &mut impl Write, ty: &Type) -> Result<()> {
         write!(writer, ": {{ [{}]: {} }}", in_ty, out_ty)?;
     }
     writeln!(writer)?;
-    writeln!(writer)?;
 
     for method in ty.meta_methods() {
         let input_type = method.parameters().get(0).map(|p| p.types().to_string());
@@ -459,15 +458,15 @@ mod tests {
     #[test]
     fn display_realm() {
         assert_eq!(
-            Realm::new(sfdoc::Realm::Server).to_string(),
+            Realm::new(sf::Realm::Server).to_string(),
             "--- Realm: server"
         );
         assert_eq!(
-            Realm::new(sfdoc::Realm::Client).to_string(),
+            Realm::new(sf::Realm::Client).to_string(),
             "--- Realm: client"
         );
         assert_eq!(
-            Realm::new(sfdoc::Realm::Shared).to_string(),
+            Realm::new(sf::Realm::Shared).to_string(),
             "--- Realm: shared"
         );
     }

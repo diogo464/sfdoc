@@ -1,4 +1,5 @@
 #![feature(pattern)]
+#![feature(never_type)]
 #![feature(assert_matches)]
 #![feature(str_split_as_str)]
 #![feature(str_split_whitespace_as_str)]
@@ -6,6 +7,7 @@
 #![feature(anonymous_lifetime_in_impl_trait)]
 
 pub mod meta;
+pub mod sf;
 pub mod snippet;
 
 use std::{
@@ -17,12 +19,12 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueHint};
 use meta::LibraryKind;
-use sfdoc::Docs;
+use sf::Docs;
 use snippet::Snippets;
 
 const DEFAULT_METADATA_FILE: &str = "docs.json";
 const DEFAULT_DOCUMENTATION_DIR: &str = "docs";
-const DEFAULT_SNIPPETS_FILE: &str = "starfall.code-snippet";
+const DEFAULT_SNIPPETS_FILE: &str = "starfall.code-snippets";
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -103,7 +105,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn command_parse(args: ParseArgs) -> anyhow::Result<()> {
-    let (docs, diags) = sfdoc::document_paths(&args.paths).unwrap();
+    let (docs, diags) = sf::document_paths(&args.paths).unwrap();
 
     match args.output.as_os_str().to_str() {
         Some("-") => {
@@ -124,14 +126,14 @@ fn command_parse(args: ParseArgs) -> anyhow::Result<()> {
 
     for diag in diags {
         match diag.level() {
-            sfdoc::DiagnosticLevel::Warning => log::warn!(
+            sf::DiagnosticLevel::Warning => log::warn!(
                 "In {} at {}:{}\nMessage: '{}'",
                 diag.path().display(),
                 diag.location().line(),
                 diag.location().column(),
                 diag.message()
             ),
-            sfdoc::DiagnosticLevel::Error => log::error!(
+            sf::DiagnosticLevel::Error => log::error!(
                 "In {} at {}:{}\nMessage: '{}'",
                 diag.path().display(),
                 diag.location().line(),

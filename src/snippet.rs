@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use sfdoc::Hook;
+use crate::sf::Hook;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Snippets(HashMap<String, Snippet>);

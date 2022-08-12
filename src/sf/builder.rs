@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::{
+use super::{
     item,
     section::{
         self, FieldSection, HookSection, LibrarySection, MethodSection, Section, TableSection,
@@ -22,7 +22,7 @@ impl<'a> section::SectionDiagnosticEmitter for DocBuilderSectionDiagnosticEmitte
         let indexer = &self.files[self.path].indexer;
         self.diagnostics.push(Diagnostic::new(
             self.path.to_owned(),
-            crate::DiagnosticLevel::Warning,
+            super::DiagnosticLevel::Warning,
             indexer.locate(diagnostic.span().begin()),
             diagnostic.message(),
         ));
